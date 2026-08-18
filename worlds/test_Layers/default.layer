@@ -1,0 +1,17 @@
+$grp GenericEntity : "{C4E8A27B1F906D71}Prefabs/MHJ_HaloJumpSign.et" {
+ {
+  coords 122.793 1 124.452
+ }
+ {
+  coords 124.361 1 122.969
+  angles 0 83.022 0
+ }
+ {
+  coords 122.306 1 121.108
+  angles 0 -177.867 0
+ }
+ {
+  coords 120.082 1 122.713
+  angles 0 -85.96 0
+ }
+}

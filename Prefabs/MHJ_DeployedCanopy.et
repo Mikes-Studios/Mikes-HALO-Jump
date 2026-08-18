@@ -1,0 +1,112 @@
+GenericEntity : "{278E487E19D82680}Prefabs/Vehicles/Core/Vehicle_Cargo_Base.et" {
+ ID "C4E8A27B2A1B4F01"
+ components {
+  MeshObject "{4B42E716914465B9}" {
+   Object "{A372F4DA63729C28}Assets/ParachuteMK3/ParachuteMK3.xob"
+  }
+  RigidBody "{4B42E71692C2FB79}" {
+   Layers 0x4040 0
+   Mass 40
+   CenterOfMass 0 1.45 0
+   LinearDamping 0.5
+   AngularDamping 0.1
+   SimState Simulation
+   ResponseIndex "Normal"
+  }
+  RplComponent "{63136787FD0BCE14}" {
+   "Rpl State Override" Runtime
+   "Parent Node From Parent Entity" 0
+  }
+  ActionsManagerComponent "{2CD4A765B4482F53}" {
+   AllowCrossHierarchy 1
+   ActionContexts {
+    UserActionContext "{C4E8A27B2A1B4F20}" {
+     ContextName "passenger_l02"
+     Position PointInfo "{C4E8A27B2A1B4F21}" {
+      Offset 0 0.674 0
+     }
+     Height 0
+    }
+   }
+  }
+  SCR_VehicleCameraDataComponent "{5E0BA784A744A7CE}" {
+   m_fHeight 0.15
+   m_fBobScale 0
+   m_fShakeScale 0
+   m_fSpeedMax 150
+   m_fDist_Max 8
+   m_fDist_Min 4
+   m_fDist_Desired 6
+   m_bCanFly 1
+   m_pPivot PointInfo "{C4E8A27B2A1B4F24}" {
+    Offset 0 0.674 0
+   }
+   m_pCameraAlignData SCR_VehicleCameraAlignment "{55552425E458A2B4}" {
+   }
+  }
+  SCR_BaseHUDComponent "{59BC55AE2A7F6FE0}" {
+   Enabled 0
+  }
+  SCR_UniversalInventoryStorageComponent "{5E58C207959A9200}" {
+   Enabled 0
+  }
+  SCR_BaseCompartmentManagerComponent "{2CD4A765A7D52986}" {
+   DoorInfoList {
+    CompartmentDoorInfo "{C4E8A27B2A1B4F12}" {
+     ContextName "passenger_l02"
+     EntryPositionInfo PointInfo "{C4E8A27B2A1B4F13}" {
+      Offset 0 0.674 0
+     }
+     ExitPositionInfo PointInfo "{C4E8A27B2A1B4F14}" {
+      Offset 0 0 1.5
+     }
+     ExitTeleportPositionInfo PointInfo "{C4E8A27B2A1B4F15}" {
+      Offset 0 0 1.5
+     }
+     GetInTeleport 1
+     GetOutTeleport 1
+     FakeDoor 1
+    }
+   }
+   CompartmentSlots {
+    CargoCompartmentSlot passenger_l02 {
+     CompartmentAction SCR_GetInUserAction "{C4E8A27B2A1B4F17}" {
+      Duration 0
+      VisibilityRange 0
+     }
+     GetOutAction SCR_GetOutAction "{C4E8A27B2A1B4F1C}" {
+      ParentContextList {
+       "passenger_l02"
+      }
+      Duration 0
+      VisibilityRange 5
+     }
+     JumpOutAction SCR_JumpOutAction "{C4E8A27B2A1B4F1D}" {
+      Duration 0
+      VisibilityRange 0
+     }
+     SwitchSeatAction SCR_SwitchSeatAction "{C4E8A27B2A1B4F1E}" {
+      Duration 0
+      VisibilityRange 0
+     }
+     PassengerPositionInfo EntitySlotInfo "{C4E8A27B2A1B4F18}" {
+      Offset 0 0.674 0
+     }
+     ForcedFreeLook 1
+     SkipCharacterDoorAnimationsFromSeat 1
+     CharactersCanFallOutOnFlip 0
+     EjectUnconsciousAndDeadCharacters 0
+     DoorInfoList {
+      0
+     }
+     ContextName "passenger_l02"
+     m_fFreelookAimLimitOverrideLeft -360
+     m_fFreelookAimLimitOverrideRight 360
+    }
+   }
+  }
+  MHJ_CanopyFlight "{C4E8A27B2A1B4F10}" {
+  }
+ }
+ Flags 0x403 0
+}

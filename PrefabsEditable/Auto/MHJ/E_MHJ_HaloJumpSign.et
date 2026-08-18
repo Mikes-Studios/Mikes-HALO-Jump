@@ -1,0 +1,26 @@
+GenericEntity : "{C4E8A27B1F906D71}Prefabs/MHJ_HaloJumpSign.et" {
+ ID "C4E8A27B2A1B4D11"
+ components {
+  SCR_EditableEntityComponent "{C4E8A27B2A1B4E01}" : "{7933327C6791C5D0}Prefabs/Editor/Components/Structures_SCR_EditableEntityComponent.ct" {
+   m_UIInfo SCR_EditableEntityUIInfo "{C4E8A27B2A1B4E02}" {
+    Name "HALO Jump Sign"
+    m_Image "{773EF3B35E502046}UI/Textures/EditorPreviews/Auto/Structures/Signs/Military/E_Sign_VehicleRepair_US_01.edds"
+   }
+  }
+  SCR_PreviewEntityComponent "{C4E8A27B2A1B4E03}" : "{6CADA7A88A6265FD}Prefabs/Editor/Components/PreviewEntityComponentClass.ct" {
+   m_bRuntime 0
+   m_aEntries {
+    SCR_BasePreviewEntry "{C4E8A27B2A1B4E04}" {
+     m_iParentID -1
+     m_Mesh "{A5B43FE12B863CFB}Assets/Structures/Signs/Military/SignRectangle_01_75x45_double.xob"
+     m_Flags HORIZONTAL
+     m_Shape MESH
+     m_iPivotID ""
+     m_vScale 1 1 1
+     m_vPosition 0 0 0
+     m_vAngles 0 0 0
+    }
+   }
+  }
+ }
+}

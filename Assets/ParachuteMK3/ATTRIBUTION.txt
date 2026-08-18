@@ -1,0 +1,24 @@
+Parachute MK3 mesh, textures, and materials are adapted from
+Alphaegen's Parachute Framework (Workshop 65930CB4CD0237B2).
+
+Source: https://github.com/Alphaegen/ArmaReforgerParachutes
+License: Arma Public License Share Alike (APL-SA). See /license.txt.
+
+This copy is modified:
+- Materials assigned to the canopy mesh (Chute.emat / Line.emat) instead of the
+  placeholder cabinet-green assignment on the original vehicle prefab.
+- Mesh, material, and texture resource GUIDs are the upstream ones. The .xob
+  bakes those GUIDs; inventing new ones makes Enfusion reject the resource
+  (Wrong GUID/name) and replication fails. Do not remap them unless you
+  reimport the FBX in Workbench so a new .xob is generated. Loading this
+  addon together with Workshop 65930CB4CD0237B2 can collide on those GUIDs.
+- Spawned as a visual child of the jumper. Flight stays a ScriptedCommand; the
+  original cargo-vehicle / compartment scripts are not included.
+
+That project has no character animation graphs. Occupants used vanilla sit-in-seat
+(SkipCharacterDoorAnimationsFromSeat). HALO freefall/canopy still uses the
+scripted command on the standing character.
+
+Blender working files (.blend) and source TIFFs were not copied; they remain in
+the upstream repository. Runtime mesh is ParachuteMK3.xob; FBX is included as
+the mesh source.

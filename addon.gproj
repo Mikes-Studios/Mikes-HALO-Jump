@@ -1,0 +1,22 @@
+GameProject {
+ ID "MikesHALOJump"
+ GUID "C4E8A27B1F906D53"
+ TITLE "Mike's HALO Jump"
+ Dependencies {
+  "58D0FB3206B6F859" "B3F91C6A4E275D08"
+ }
+ Configurations {
+  GameProjectConfig PC {
+  }
+  GameProjectConfig XBOX_ONE {
+  }
+  GameProjectConfig XBOX_SERIES {
+  }
+  GameProjectConfig PS4 {
+  }
+  GameProjectConfig PS5 {
+  }
+  GameProjectConfig HEADLESS {
+  }
+ }
+}

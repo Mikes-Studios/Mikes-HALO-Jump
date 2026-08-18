@@ -1,0 +1,17 @@
+MetaFileClass {
+ Name "{C4E8A27B1F906D86}Assets/ParachuteMK3/ParachuteMK3.fbx"
+ Configurations {
+  FBXResourceClass PC {
+  }
+  FBXResourceClass XBOX_ONE : PC {
+  }
+  FBXResourceClass XBOX_SERIES : PC {
+  }
+  FBXResourceClass PS4 : PC {
+  }
+  FBXResourceClass PS5 : PC {
+  }
+  FBXResourceClass HEADLESS : PC {
+  }
+ }
+}

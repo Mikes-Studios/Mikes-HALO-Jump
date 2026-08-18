@@ -1,0 +1,17 @@
+MetaFileClass {
+ Name "{A372F4DA63729C28}Assets/ParachuteMK3/ParachuteMK3.xob"
+ Configurations {
+  XOBResourceClass PC {
+  }
+  XOBResourceClass XBOX_ONE : PC {
+  }
+  XOBResourceClass XBOX_SERIES : PC {
+  }
+  XOBResourceClass PS4 : PC {
+  }
+  XOBResourceClass PS5 : PC {
+  }
+  XOBResourceClass HEADLESS : PC {
+  }
+ }
+}

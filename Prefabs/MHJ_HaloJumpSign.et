@@ -1,0 +1,23 @@
+GenericEntity : "{F4B7F1D4D3ADE456}Prefabs/Structures/Signs/Military/Sign_VehicleRepair_US_01.et" {
+ ID "C4E8A27B2A1B4D01"
+ components {
+  ActionsManagerComponent "{C4E8A27B2A1B4D0A}" {
+   ActionContexts {
+    UserActionContext "{C4E8A27B2A1B4D0B}" {
+     ContextName "main"
+     Position PointInfo "{C4E8A27B2A1B4D0C}" {
+      Offset 0 1.266 0.038
+     }
+     Radius 1.2
+    }
+   }
+   additionalActions {
+    MHJ_HaloJumpUserAction "{C4E8A27B2A1B4D0D}" {
+     ParentContextList {
+      "main"
+     }
+    }
+   }
+  }
+ }
+}
