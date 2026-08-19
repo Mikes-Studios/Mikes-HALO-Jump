@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------------------------
-//! Atmosphere, wind, and ram-air coefficients for MHJ_HaloCommand.
+//! Atmosphere, wind, and ram-air coefficients for MHJ freefall and canopy aero.
 //! Density is ISA. Wind is the world weather vector, sheared with altitude.
 //------------------------------------------------------------------------------------------------
 class MHJ_FlightAero

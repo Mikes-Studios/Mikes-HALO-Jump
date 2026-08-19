@@ -53,4 +53,4 @@ The ram-air canopy (`Prefabs/MHJ_DeployedCanopy.et`) appears at open altitude an
 
 Full text: `license.txt`.
 
-The Parachute MK3 mesh, textures, and materials are adapted from [Alphaegen's Parachute Framework](https://github.com/Alphaegen/ArmaReforgerParachutes) (Workshop `65930CB4CD0237B2`). See `Assets/ParachuteMK3/ATTRIBUTION.txt`. That project has no character animation graphs (vanilla sit-in-seat). This addon does **not** depend on that Workshop item; flight stays a ScriptedCommand, not a cargo vehicle.
+The Parachute MK3 mesh, textures, and materials are adapted from [Alphaegen's Parachute Framework](https://github.com/Alphaegen/ArmaReforgerParachutes) (Workshop `65930CB4CD0237B2`). See `Assets/ParachuteMK3/ATTRIBUTION.txt`. That project has no character animation graphs (vanilla sit-in-seat). This addon does **not** depend on that Workshop item. Freefall stays on native Fall; canopy boarding uses native GetIn on our own cargo prefab.

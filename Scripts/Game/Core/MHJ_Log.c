@@ -4,11 +4,29 @@
 class MHJ_Log
 {
 	protected static const string PREFIX = "[MHJ]";
+	//! Flight/board lifecycle diagnostics. Keep enabled until dedicated boarding
+	//! has completed reliably; these are transition logs, not per-frame spam.
+	protected static const bool DIAG = true;
+
+	//------------------------------------------------------------------------------------------------
+	static bool IsDiag()
+	{
+		return DIAG;
+	}
 
 	//------------------------------------------------------------------------------------------------
 	static void Info(string message)
 	{
+		if (!DIAG)
+			return;
+
 		Print(PREFIX + " " + message, LogLevel.NORMAL);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	static void Land(string message)
+	{
+		Print(PREFIX + " LAND " + message, LogLevel.WARNING);
 	}
 
 	//------------------------------------------------------------------------------------------------

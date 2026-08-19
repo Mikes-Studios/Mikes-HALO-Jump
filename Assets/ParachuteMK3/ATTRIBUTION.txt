@@ -12,12 +12,12 @@ This copy is modified:
   (Wrong GUID/name) and replication fails. Do not remap them unless you
   reimport the FBX in Workbench so a new .xob is generated. Loading this
   addon together with Workshop 65930CB4CD0237B2 can collide on those GUIDs.
-- Spawned as a visual child of the jumper. Flight stays a ScriptedCommand; the
-  original cargo-vehicle / compartment scripts are not included.
+- Spawned as a replicated cargo canopy at open altitude. Freefall stays on
+  native Fall; the original cargo-vehicle / compartment scripts are not included.
 
 That project has no character animation graphs. Occupants used vanilla sit-in-seat
-(SkipCharacterDoorAnimationsFromSeat). HALO freefall/canopy still uses the
-scripted command on the standing character.
+(SkipCharacterDoorAnimationsFromSeat). HALO freefall ticks beside native Fall;
+canopy uses native GetIn/GetOut on MHJ_DeployedCanopy.
 
 Blender working files (.blend) and source TIFFs were not copied; they remain in
 the upstream repository. Runtime mesh is ParachuteMK3.xob; FBX is included as

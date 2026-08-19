@@ -147,7 +147,7 @@ class MHJ_HaloJumpMenu
 			m_wRoot.RemoveFromHierarchy();
 			m_wRoot = null;
 		}
-		WidgetManager.SetCursor(12);
+		WidgetManager.SetCursor(0);
 		m_bClosing = false;
 	}
 

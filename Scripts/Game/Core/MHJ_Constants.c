@@ -24,8 +24,10 @@ class MHJ_Constants
 	static const float LAND_CARRY_ANALOG_MAX = 1.15;
 	static const float LAND_CARRY_TIME = 1.0;
 	static const float LAND_CARRY_INPUT_BREAK = 0.2;
+	static const int FALL_DAMAGE_IGNORE_MS = 15000;
 
 	static const float GRAVITY = 9.81;
+	//! Matches MHJ_DeployedCanopy RigidBody mass. Polar cruise/dive is tuned for this.
 	static const float MASS = 200;
 	static const float AIR_DENSITY_SL = 1.325;
 	static const float BODY_AREA = 0.55;
@@ -53,6 +55,15 @@ class MHJ_Constants
 	static const float CANOPY_STALL_SPEED = 6.4;
 	static const float CANOPY_CRUISE_TAS = 11;
 	static const float CANOPY_MAX_TAS = 52;
+	//! Working MK4 m_MaxFallSpeed. Hands-off canopy bleeds toward this, never clips.
+	static const float CANOPY_MAX_SINK = 5;
+	//! m/s² toward MAX_SINK. 5 matches working HandleDrag. Opening may dump faster.
+	static const float CANOPY_SINK_DECEL = 5;
+	static const float CANOPY_OPEN_SINK_DECEL = 18;
+	static const int CANOPY_DELETE_DELAY_MS = 200;
+	static const float CANOPY_OWNER_BLEND = 0.35;
+	static const float CANOPY_OWNER_SNAP_M = 1.5;
+	static const float CANOPY_OWNER_ANG_SNAP = 10;
 	static const float CANOPY_CL_TRIM = 0.55;
 	static const float CANOPY_CD_TRIM = 0.15;
 	static const float CANOPY_CL_DIVE_DROP = 0.50;
@@ -94,6 +105,8 @@ class MHJ_Constants
 	static const float CANOPY_PITCH_IN_MAX = 3;
 	static const float CANOPY_DIVE_IN_TIME = 1.42;
 	static const float CANOPY_DIVE_IN_MAX = 1.8;
+	//! Dedicated clients wait for the server canopy to replicate before GetIn.
+	static const float CANOPY_BOARD_WAIT = 12;
 
 	static const float WIND_REF_HEIGHT = 10;
 	static const float WIND_SHEAR_EXP = 0.11;
@@ -107,11 +120,6 @@ class MHJ_Constants
 	static const float WORLD_SIZE_FALLBACK = 12800;
 
 	static const string CANOPY_PREFAB = "{C4E8A27B1F906D90}Prefabs/MHJ_DeployedCanopy.et";
-	static const float CANOPY_MESH_OFFSET_Y = -1.45;
-	static const float CANOPY_SEAT_OFFSET_Y = 0.674;
-	static const string CANOPY_VEHICLE_AGR = "{66618A6A119CAD93}Assets/Vehicles/Wheeled/workspaces/Vehicles_Wheeled_Graph.agr";
-	static const string CANOPY_VEHICLE_ASI = "{AA88048D862E1368}Assets/Vehicles/Wheeled/workspaces/Player_Wheeled_Ural.asi";
-	static const string CANOPY_VEHICLE_BINDING = "Vehicle";
 }
 
 //------------------------------------------------------------------------------------------------

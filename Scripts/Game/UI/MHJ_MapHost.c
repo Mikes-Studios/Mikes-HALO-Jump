@@ -84,6 +84,7 @@ class MHJ_MapHost
 
 		RecyclePips();
 		CloseOwnMap();
+		ReleaseMapContext();
 
 		if (m_wMapWidget)
 		{
@@ -120,6 +121,7 @@ class MHJ_MapHost
 		SCR_MapEntity.GetOnMapOpen().Remove(OnMapOpen);
 		SCR_MapEntity.GetOnMapOpenComplete().Remove(OnMapOpenComplete);
 		SCR_MapEntity.GetOnMapClose().Remove(OnMapClose);
+		ReleaseMapContext();
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -696,6 +698,17 @@ class MHJ_MapHost
 		m_bOwnsMap = false;
 		m_bLive = false;
 		m_bZoomReady = false;
+		ReleaseMapContext();
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void ReleaseMapContext()
+	{
+		InputManager im = GetGame().GetInputManager();
+		if (!im)
+			return;
+
+		im.ResetContext(MAP_CONTEXT);
 	}
 
 	//------------------------------------------------------------------------------------------------

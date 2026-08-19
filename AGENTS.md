@@ -4,7 +4,7 @@ This repository is a **mode-agnostic HALO jump addon** for Arma Reforger, not a 
 
 1. Prefix `MHJ_`. Do not add I&A-specific code here.
 2. **Do not edit Mikes-UI** to host this menu. Subclass `MUI_MenuBase` here.
-3. **Do not edit GameSources.** Locomotion is a `ScriptedCommand` plus `modded class SCR_CharacterCommandHandlerComponent`.
+3. **Do not edit GameSources.** Freefall stays on native `StartCommand_Fall`. `MHJ_HaloCommand` is a Managed aero helper, not a `ScriptedCommand`. Canopy boarding uses native `GetInVehicle` only.
 4. Consume Mikes-UI via addon GUID `B3F91C6A4E275D08`.
 5. Enforce: no ternary; every `new` in a `ref`; colors via `Color.FromSRGBA`; MUI paint via `DrawX/Y` + `GetDrawOpacity()`.
 6. Server-authoritative jump start. UI is local. Call `super` unless replacing.

@@ -1,9 +1,8 @@
 //------------------------------------------------------------------------------------------------
-//! Ram-air flight after the jumper sits in the canopy cargo seat.
-//! The standing graph cannot pitch with the wing; GetInVehicle links the pawn so
-//! the sit pose inherits this entity's world attitude.
+//! Owner-owned input node with server Rpl authority. Flight starts on spawn;
+//! occupancy only gates steer. Authority ticks in EOnSimulate with gravity on.
 //------------------------------------------------------------------------------------------------
-[ComponentEditorProps(category: "MHJ", description: "HALO canopy flight after cargo-seat GetIn.")]
+[ComponentEditorProps(category: "MHJ", description: "Server-authoritative owner-owned HALO canopy.")]
 class MHJ_CanopyFlightClass : ScriptComponentClass
 {
 }
@@ -11,13 +10,13 @@ class MHJ_CanopyFlightClass : ScriptComponentClass
 class MHJ_CanopyFlight : ScriptComponent
 {
 	protected RplComponent m_Rpl;
+	protected IEntity m_Owner;
 	protected ChimeraCharacter m_pJumper;
-	protected CharacterInputContext m_Input;
-	protected CharacterHeadAimingComponent m_pHeadAim;
 	protected BaseCompartmentSlot m_Slot;
+	protected CharacterInputContext m_Input;
+	protected int m_iExpectedPlayerId;
 
 	protected float m_fHeading;
-	protected float m_fHeadingV;
 	protected float m_fAirspeed;
 	protected float m_fVelY;
 	protected float m_fTurnInput;
@@ -37,48 +36,47 @@ class MHJ_CanopyFlight : ScriptComponent
 	protected float m_fOpenAltitude;
 	protected float m_fNetTurn;
 	protected float m_fNetPitch;
-	protected bool m_bActive;
-	protected bool m_bHudOwned;
-	protected bool m_bSnatchFired;
+	protected float m_fListenTurn;
+	protected float m_fListenPitch;
+	protected float m_fInputAge;
+	protected float m_fStateSendTime;
+	protected float m_fInputSendTime;
+	protected float m_fBoardWait;
+	protected float m_fLandDown;
+	protected float m_fLandHorizontal;
+	protected float m_fLandHeading;
+	protected bool m_bServerSession;
+	protected bool m_bOwnerSession;
+	protected bool m_bBoarded;
 	protected bool m_bLanding;
-	protected bool m_bLookWidened;
+	protected bool m_bExitAsked;
+	protected bool m_bApplyLandingResult;
+	protected bool m_bSnatchFired;
+	protected bool m_bInputListening;
 	protected string m_sFlightMode;
 	protected vector m_vWorldVel;
 	protected vector m_vWind;
-	protected ref TraceParam m_AglTrace;
-	protected int m_iBoardTries;
-	protected bool m_bBoardQueued;
-	protected int m_iDeleteTries;
-	protected float m_fDiagT;
+	protected float m_fDiagTime;
 
 	//------------------------------------------------------------------------------------------------
 	static bool OccupantIsInCanopy(IEntity character)
 	{
-		if (!character)
+		ChimeraCharacter jumper = ChimeraCharacter.Cast(character);
+		if (!jumper)
 			return false;
 
-		ChimeraCharacter pawn = ChimeraCharacter.Cast(character);
-		if (!pawn)
-			return false;
-		if (!pawn.IsInVehicle())
-			return false;
-
-		CompartmentAccessComponent access = pawn.GetCompartmentAccessComponent();
-		if (!access)
+		CompartmentAccessComponent access = jumper.GetCompartmentAccessComponent();
+		if (!access || !access.IsInCompartment())
 			return false;
 
 		BaseCompartmentSlot slot = access.GetCompartment();
 		if (!slot)
 			return false;
 
-		IEntity veh = slot.GetOwner();
-		if (!veh)
+		IEntity vehicle = slot.GetOwner();
+		if (!vehicle)
 			return false;
-
-		MHJ_CanopyFlight flight = MHJ_CanopyFlight.Cast(veh.FindComponent(MHJ_CanopyFlight));
-		if (!flight)
-			return false;
-		return true;
+		return MHJ_CanopyFlight.Cast(vehicle.FindComponent(MHJ_CanopyFlight)) != null;
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -88,91 +86,197 @@ class MHJ_CanopyFlight : ScriptComponent
 		if (SCR_Global.IsEditMode())
 			return;
 
-		SetEventMask(owner, EntityEvent.FRAME);
+		m_Rpl = RplComponent.Cast(owner.FindComponent(RplComponent));
+		m_Owner = owner;
+		CacheSlot();
+		Physics physics = owner.GetPhysics();
+		if (physics)
+		{
+			physics.EnableGravity(false);
+			physics.SetAngularVelocity(vector.Zero);
+		}
+		SetEventMask(owner, EntityEvent.FRAME | EntityEvent.SIMULATE | EntityEvent.POSTSIMULATE | EntityEvent.CONTACT);
 	}
 
 	//------------------------------------------------------------------------------------------------
 	override void OnDelete(IEntity owner)
 	{
-		RestoreLookLimits();
-		if (m_bHudOwned)
+		GetGame().GetCallqueue().Remove(MHJ_DeleteAfterExit);
+		DisableOwnerControls();
+		if (m_bOwnerSession)
 		{
 			MHJ_JumpHud.Close();
-			m_bHudOwned = false;
+			SCR_PlayerController playerController = SCR_PlayerController.Cast(GetGame().GetPlayerController());
+			if (playerController)
+				playerController.MHJ_HandleCanopySessionAborted();
 		}
+		if (m_bServerSession && m_pJumper)
+		{
+			SCR_CharacterCommandHandlerComponent handler = SCR_CharacterCommandHandlerComponent.Cast(m_pJumper.FindComponent(SCR_CharacterCommandHandlerComponent));
+			if (handler)
+				handler.MHJ_CanopyBoardFailed();
+		}
+		m_bOwnerSession = false;
+		m_bServerSession = false;
+		super.OnDelete(owner);
 	}
 
 	//------------------------------------------------------------------------------------------------
-	bool BeginFlight(notnull ChimeraCharacter jumper, vector worldVel, vector wind, float heading, float pitch, float bank, float pathDeg, float simT, bool hudOwned, float openAltitude)
+	//! Called on the server after GiveExt. Ownership never changes RplRole.Authority.
+	bool BeginFlight(notnull ChimeraCharacter jumper, vector worldVelocity, vector wind, float heading, float pitch, float bank, float simTime, float openAltitude)
 	{
-		IEntity owner = GetOwner();
-		if (!owner)
+		if (!IsAuthority())
 			return false;
 
-		m_Rpl = RplComponent.Cast(owner.FindComponent(RplComponent));
 		m_pJumper = jumper;
-		m_vWorldVel = worldVel;
+		m_iExpectedPlayerId = GetGame().GetPlayerManager().GetPlayerIdFromControlledEntity(jumper);
+		if (m_iExpectedPlayerId <= 0)
+			return false;
+
+		m_vWorldVel = worldVelocity;
+		float inheritSpeed = m_vWorldVel.Length();
+		if (inheritSpeed > MHJ_Constants.FREEFALL_TERMINAL)
+			m_vWorldVel = m_vWorldVel * (MHJ_Constants.FREEFALL_TERMINAL / inheritSpeed);
 		m_vWind = wind;
 		m_fHeading = heading;
 		m_fPitch = pitch;
 		m_fBank = bank;
-		m_fPathDeg = pathDeg;
-		m_fSimT = simT;
+		m_fSimT = simTime;
 		m_fOpenAltitude = openAltitude;
 		m_fOpenT = 0;
-		m_bSnatchFired = false;
-		m_bLanding = false;
-		m_sFlightMode = "OPENING";
-		m_fTurnFilt = 0;
-		m_fTurnFiltV = 0;
-		m_fPitchInputFilt = 0;
-		m_fPitchInputFiltV = 0;
+		m_fPathDeg = MHJ_Constants.CANOPY_PATH_CRUISE;
 		m_fPathDegV = 0;
-		m_fHeadingV = 0;
-		m_fBankV = 0;
-		m_fPitchV = 0;
 		m_fTurnInput = 0;
 		m_fPitchInput = 0;
 		m_fNetTurn = 0;
 		m_fNetPitch = 0;
-		if (!m_AglTrace)
-			m_AglTrace = new TraceParam();
+		m_fListenTurn = 0;
+		m_fListenPitch = 0;
+		m_fInputAge = 0;
+		m_fBoardWait = 0;
+		m_fTurnFilt = 0;
+		m_fTurnFiltV = 0;
+		m_fPitchInputFilt = 0;
+		m_fPitchInputFiltV = 0;
+		m_fBankV = 0;
+		m_fPitchV = 0;
+		m_bBoarded = false;
+		m_bLanding = false;
+		m_bExitAsked = false;
+		m_bApplyLandingResult = false;
+		m_bSnatchFired = false;
+		m_bInputListening = false;
+		m_sFlightMode = "OPENING";
+		m_bServerSession = true;
 
+		WakePhysics();
 		SyncSpeedFromWorld();
-		CacheSlot();
-
-		CharacterControllerComponent ctrl = jumper.GetCharacterController();
-		if (ctrl)
-		{
-			m_Input = ctrl.GetInputContext();
-			ctrl.SetWeaponRaised(false);
-			ctrl.SetWeaponADS(false);
-			ctrl.ForceStance(ECharacterStance.STAND);
-			ctrl.SetHeadingAngle(heading, true);
-			ctrl.SetForcedFreeLook(true);
-		}
-
-		if (IsLocalOccupant())
-		{
-			m_bHudOwned = hudOwned;
-			WidenLookLimits();
-		}
-		else if (hudOwned)
-		{
-			m_bHudOwned = false;
-		}
-
-		ApplyYawOnly();
-		m_bActive = true;
-		MHJ_Log.Info("Canopy BeginFlight at " + owner.GetOrigin().ToString() + " vel=" + m_vWorldVel.ToString() + " pitch=" + MHJ_Log.Deg(m_fPitch) + " bank=" + MHJ_Log.Deg(m_fBank) + " path=" + MHJ_Log.Deg(m_fPathDeg) + " hdg=" + MHJ_Log.Deg(m_fHeading * Math.RAD2DEG));
-
-		SCR_CharacterCommandHandlerComponent handler = SCR_CharacterCommandHandlerComponent.Cast(jumper.FindComponent(SCR_CharacterCommandHandlerComponent));
-		if (handler)
-			handler.MHJ_BeginCanopyBoard(owner, m_Slot);
-		else
-			MHJ_Log.Warning("Canopy BeginFlight: no command handler");
-
+		MHJ_Log.Info("Canopy authority initialized");
 		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! Owner-local replica setup. No aero or movement is run here.
+	void MHJ_BeginOwnerSession(notnull ChimeraCharacter jumper, float openAltitude)
+	{
+		m_pJumper = jumper;
+		m_fOpenAltitude = openAltitude;
+		CharacterControllerComponent controller = jumper.GetCharacterController();
+		if (controller)
+			m_Input = controller.GetInputContext();
+
+		m_bOwnerSession = true;
+		m_bLanding = false;
+		if (!MHJ_JumpHud.IsOpen())
+			MHJ_JumpHud.Open();
+		SCR_HintManagerComponent.ShowCustomHint("W dives. S flares — dive first to swoop. Land into the wind.", "CANOPY", 7);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	BaseCompartmentSlot GetCanopySlot()
+	{
+		CacheSlot();
+		return m_Slot;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	void MHJ_OwnerConfirmBoarded()
+	{
+		if (!IsOwnedHere())
+			return;
+		if (IsAuthority())
+			RpcAsk_MHJ_OwnerBoarded();
+		else
+			Rpc(RpcAsk_MHJ_OwnerBoarded);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
+	protected void RpcAsk_MHJ_OwnerBoarded()
+	{
+		if (!IsAuthority())
+			return;
+
+		m_bBoarded = true;
+		WakePhysics();
+		if (m_pJumper)
+		{
+			SCR_CharacterCommandHandlerComponent handler = SCR_CharacterCommandHandlerComponent.Cast(m_pJumper.FindComponent(SCR_CharacterCommandHandlerComponent));
+			if (handler)
+				handler.MHJ_OnFreefallBoarded();
+		}
+		MHJ_Log.Info("Canopy owner reported boarded");
+	}
+
+	//------------------------------------------------------------------------------------------------
+	void MHJ_OwnerAbortSession()
+	{
+		if (!IsOwnedHere())
+			return;
+		if (IsAuthority())
+			MHJ_ServerAbortSession();
+		else
+			Rpc(RpcAsk_MHJ_AbortSession);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
+	protected void RpcAsk_MHJ_AbortSession()
+	{
+		MHJ_ServerAbortSession();
+	}
+
+	//------------------------------------------------------------------------------------------------
+	void MHJ_ServerAbortSession()
+	{
+		if (!IsAuthority())
+			return;
+		if (m_bLanding)
+			return;
+
+		m_bLanding = true;
+		m_bApplyLandingResult = false;
+		m_bServerSession = false;
+		MHJ_Log.Warning("Canopy session aborted boarded=" + MHJ_Log.Flag(m_bBoarded) + " agl=" + GetAgl().ToString());
+		SleepPhysics();
+		if (IsOwnedHere())
+			RpcDo_MHJ_SessionAborted();
+		else
+			Rpc(RpcDo_MHJ_SessionAborted);
+		AskOwnerToExitOnce();
+		GetGame().GetCallqueue().CallLater(MHJ_DeleteAfterExit, MHJ_Constants.CANOPY_DELETE_DELAY_MS, false);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	[RplRpc(RplChannel.Reliable, RplRcver.Owner)]
+	protected void RpcDo_MHJ_SessionAborted()
+	{
+		m_bOwnerSession = false;
+		DisableOwnerControls();
+		MHJ_JumpHud.Close();
+		SCR_PlayerController playerController = SCR_PlayerController.Cast(GetGame().GetPlayerController());
+		if (playerController)
+			playerController.MHJ_HandleCanopySessionAborted();
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -180,55 +284,129 @@ class MHJ_CanopyFlight : ScriptComponent
 	{
 		if (SCR_Global.IsEditMode())
 			return;
-		if (!m_bActive)
-			return;
-		if (m_bLanding)
-			return;
 
-		if (!m_pJumper)
-			AdoptOccupant();
-
-		if (IsOwner())
+		if (IsOwnedHere() && m_bOwnerSession && !m_bLanding)
 		{
 			if (IsLocalOccupant())
-			{
-				InputManager im = GetGame().GetInputManager();
-				if (im)
-					im.ActivateContext("CharacterMovementContext");
-				KeepCanopyFreeLook();
-			}
-			ReadInput();
-			if (!IsAuthority())
-				Rpc(RpcAsk_MHJ_Steer, m_fTurnInput, m_fPitchInput);
+				TickOwner(timeSlice);
+			else
+				DisableOwnerControls();
 		}
-		else if (IsAuthority())
+	}
+
+	//------------------------------------------------------------------------------------------------
+	override void EOnSimulate(IEntity owner, float timeSlice)
+	{
+		if (SCR_Global.IsEditMode())
+			return;
+
+		LockCanopySpin(owner);
+
+		if (!IsAuthority() || !m_bServerSession || m_bLanding)
+			return;
+
+		TickAuthorityFlight(owner, timeSlice);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	override void EOnPostSimulate(IEntity owner, float timeSlice)
+	{
+		if (SCR_Global.IsEditMode())
+			return;
+
+		LockCanopySpin(owner);
+		if (!IsAuthority() || !m_bServerSession || m_bLanding)
+			return;
+
+		ApplyAuthorityOrientation();
+	}
+
+	//------------------------------------------------------------------------------------------------
+	override void EOnContact(IEntity owner, IEntity other, Contact contact)
+	{
+		if (SCR_Global.IsEditMode())
+			return;
+		if (!IsAuthority() || !m_bServerSession || m_bLanding)
+			return;
+		if (!m_bBoarded)
+			return;
+		if (other)
 		{
+			if (other == m_pJumper)
+				return;
+			if (other.GetParent() == owner)
+				return;
+		}
+
+		FinishLanding();
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void TickAuthorityFlight(notnull IEntity owner, float timeSlice)
+	{
+		if (!ValidateSessionCharacter())
+		{
+			MHJ_ServerAbortSession();
+			return;
+		}
+
+		if (!m_bBoarded)
+		{
+			CacheSlot();
+			if (ValidateExpectedOccupant())
+			{
+				m_bBoarded = true;
+				WakePhysics();
+			}
+			else if (m_Slot && m_Slot.IsOccupied())
+			{
+				m_bBoarded = true;
+				WakePhysics();
+			}
+			else
+			{
+				m_fBoardWait = m_fBoardWait + timeSlice;
+				if (m_fBoardWait >= MHJ_Constants.CANOPY_BOARD_WAIT)
+				{
+					MHJ_Log.Warning("Canopy board wait expired occupant=" + MHJ_Log.Flag(m_Slot && m_Slot.GetOccupant() != null) + " agl=" + GetAgl().ToString());
+					MHJ_ServerAbortSession();
+					return;
+				}
+			}
+		}
+
+		CharacterControllerComponent controller = m_pJumper.GetCharacterController();
+		if (controller && controller.IsDead())
+		{
+			FinishLanding();
+			return;
+		}
+
+		if (m_bBoarded)
+		{
+			m_fInputAge = m_fInputAge + timeSlice;
+			if (m_fInputAge > 1.2)
+			{
+				m_fNetTurn = 0;
+				m_fNetPitch = 0;
+			}
 			m_fTurnInput = m_fNetTurn;
 			m_fPitchInput = m_fNetPitch;
 		}
-
-		if (IsLocalOccupant())
-			KeepCanopyFreeLook();
-
-		if (!IsAuthority())
+		else
 		{
-			if (m_bHudOwned)
-				PushHud(GetAgl());
-			return;
-		}
-
-		if (m_pJumper && HasOccupant())
-		{
-			CharacterControllerComponent ctrl = m_pJumper.GetCharacterController();
-			if (ctrl && ctrl.IsDead())
-			{
-				FinishLanding();
-				return;
-			}
+			m_fTurnInput = 0;
+			m_fPitchInput = 0;
 		}
 
 		m_fSimT = m_fSimT + timeSlice;
 		m_vWind = MHJ_FlightAero.WindWorld(owner.GetOrigin()[1], m_fSimT);
+
+		if (IsBelowTerrain())
+		{
+			FinishLanding();
+			return;
+		}
 
 		float agl = GetAgl();
 		if (agl <= MHJ_Constants.LAND_AGL)
@@ -237,21 +415,29 @@ class MHJ_CanopyFlight : ScriptComponent
 			return;
 		}
 
-		if (HasOccupant())
+		ApplyCanopy(timeSlice, agl);
+		IntegrateAero(timeSlice);
+		ApplyAuthorityMotion();
+		SendFlightState(timeSlice);
+		LogCanopyTick(timeSlice, agl);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void TickOwner(float timeSlice)
+	{
+		EnableOwnerControls();
+		ReadInput();
+		m_fInputSendTime = m_fInputSendTime + timeSlice;
+		if (m_fInputSendTime >= 0.05)
 		{
-			SCR_CharacterCommandHandlerComponent handler = SCR_CharacterCommandHandlerComponent.Cast(m_pJumper.FindComponent(SCR_CharacterCommandHandlerComponent));
-			if (handler)
-				handler.MHJ_KeepCanopySitPose();
-
-			ApplyCanopy(timeSlice, agl);
-			IntegrateAero(timeSlice);
-			ApplyWorldAttitudeWithDt(timeSlice);
-			LogCanopyDiag(timeSlice);
+			m_fInputSendTime = 0;
+			if (IsAuthority())
+				ApplyOwnedInput(m_fTurnInput, m_fPitchInput);
+			else if (IsOwnedHere())
+				Rpc(RpcAsk_MHJ_Steer, m_fTurnInput, m_fPitchInput);
 		}
-		else
-			HoldAtJumper();
 
-		PushHud(agl);
+		PushHud(GetAgl());
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -260,7 +446,15 @@ class MHJ_CanopyFlight : ScriptComponent
 	{
 		if (!IsAuthority())
 			return;
+		if (!ValidateExpectedOccupant())
+			return;
 
+		ApplyOwnedInput(turn, pitch);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void ApplyOwnedInput(float turn, float pitch)
+	{
 		m_fNetTurn = turn;
 		m_fNetPitch = pitch;
 		if (m_fNetTurn > 1)
@@ -271,415 +465,242 @@ class MHJ_CanopyFlight : ScriptComponent
 			m_fNetPitch = 1;
 		if (m_fNetPitch < -1)
 			m_fNetPitch = -1;
+		m_fInputAge = 0;
 	}
 
 	//------------------------------------------------------------------------------------------------
-	[RplRpc(RplChannel.Reliable, RplRcver.Owner)]
-	protected void RpcDo_MHJ_Board()
+	protected void ReadInput()
 	{
-		RequestBoard();
-	}
+		m_fTurnInput = m_fListenTurn;
+		m_fPitchInput = m_fListenPitch;
 
-	//------------------------------------------------------------------------------------------------
-	protected void RequestBoard()
-	{
-		m_iBoardTries = 0;
-		m_bBoardQueued = false;
-		MHJ_Log.Info("Canopy RequestBoard delay=150 server=" + MHJ_Log.Flag(Replication.IsServer()) + " local=" + MHJ_Log.Flag(IsLocalOccupant()));
-		GetGame().GetCallqueue().CallLater(TryBoard, 150, false);
-		if (m_Rpl && !IsOwner())
-			Rpc(RpcDo_MHJ_Board);
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected void TryBoard()
-	{
-		if (!GetOwner())
+		InputManager inputManager = GetGame().GetInputManager();
+		if (inputManager)
 		{
-			MHJ_Log.Warning("Canopy TryBoard: owner gone");
+			float characterTurn = inputManager.GetActionValue("CharacterRight");
+			float characterPitch = inputManager.GetActionValue("CharacterForward");
+			if (m_fTurnInput > -0.12 && m_fTurnInput < 0.12)
+				m_fTurnInput = characterTurn;
+			if (m_fPitchInput > -0.12 && m_fPitchInput < 0.12)
+				m_fPitchInput = characterPitch;
+
+			float vehicleSteer = inputManager.GetActionValue("VehicleSteer");
+			float vehicleThrottle = inputManager.GetActionValue("VehicleThrottle");
+			if (m_fTurnInput > -0.12 && m_fTurnInput < 0.12)
+				m_fTurnInput = vehicleSteer;
+			if (m_fPitchInput > -0.12 && m_fPitchInput < 0.12)
+				m_fPitchInput = vehicleThrottle;
+		}
+
+		if (m_Input)
+		{
+			float moveSpeed;
+			vector localDirection;
+			m_Input.GetMovement(moveSpeed, localDirection);
+			if (m_fTurnInput > -0.12 && m_fTurnInput < 0.12)
+				m_fTurnInput = localDirection[0];
+			if (m_fPitchInput > -0.12 && m_fPitchInput < 0.12)
+				m_fPitchInput = localDirection[2];
+		}
+
+		if (m_fTurnInput > 1)
+			m_fTurnInput = 1;
+		if (m_fTurnInput < -1)
+			m_fTurnInput = -1;
+		if (m_fPitchInput > 1)
+			m_fPitchInput = 1;
+		if (m_fPitchInput < -1)
+			m_fPitchInput = -1;
+		if (m_fTurnInput > -0.12 && m_fTurnInput < 0.12)
+			m_fTurnInput = 0;
+		if (m_fPitchInput > -0.12 && m_fPitchInput < 0.12)
+			m_fPitchInput = 0;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void EnableOwnerControls()
+	{
+		InputManager inputManager = GetGame().GetInputManager();
+		if (!inputManager)
 			return;
-		}
-		if (m_bLanding)
-		{
-			MHJ_Log.Warning("Canopy TryBoard: already landing");
+
+		if (!inputManager.IsContextActive("CharacterMovementContext"))
+			inputManager.ActivateContext("CharacterMovementContext");
+		if (m_bInputListening)
 			return;
-		}
 
-		string why;
-		if (TryGetIn(why))
-		{
-			MHJ_Log.Info("Canopy GetIn ok tries=" + m_iBoardTries.ToString());
-			return;
-		}
-
-		MHJ_Log.Warning("Canopy GetIn try=" + m_iBoardTries.ToString() + " why=" + why + " " + BuildBoardDump());
-
-		m_iBoardTries = m_iBoardTries + 1;
-		if (m_iBoardTries >= 20)
-		{
-			MHJ_Log.Warning("Canopy GetIn failed after 20 tries last=" + why);
-			return;
-		}
-
-		GetGame().GetCallqueue().CallLater(TryBoard, 50, false);
+		inputManager.AddActionListener("CharacterForward", EActionTrigger.VALUE, OnOwnerForward);
+		inputManager.AddActionListener("CharacterRight", EActionTrigger.VALUE, OnOwnerRight);
+		inputManager.AddActionListener("VehicleThrottle", EActionTrigger.VALUE, OnOwnerForward);
+		inputManager.AddActionListener("VehicleSteer", EActionTrigger.VALUE, OnOwnerRight);
+		m_bInputListening = true;
+		MHJ_Log.Info("Canopy owner controls enabled");
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected bool TryGetIn(out string why)
+	protected void DisableOwnerControls()
 	{
-		why = "unknown";
-		if (!m_pJumper)
-		{
-			why = "no-jumper";
-			return false;
-		}
-		if (m_pJumper.IsInVehicle())
-		{
-			if (OccupantIsInCanopy(m_pJumper))
-			{
-				why = "already-in-canopy";
-				return true;
-			}
+		if (!m_bInputListening)
+			return;
 
-			why = "in-other-vehicle";
-			return false;
+		InputManager inputManager = GetGame().GetInputManager();
+		if (inputManager)
+		{
+			inputManager.RemoveActionListener("CharacterForward", EActionTrigger.VALUE, OnOwnerForward);
+			inputManager.RemoveActionListener("CharacterRight", EActionTrigger.VALUE, OnOwnerRight);
+			inputManager.RemoveActionListener("VehicleThrottle", EActionTrigger.VALUE, OnOwnerForward);
+			inputManager.RemoveActionListener("VehicleSteer", EActionTrigger.VALUE, OnOwnerRight);
 		}
 
-		CompartmentAccessComponent access = m_pJumper.GetCompartmentAccessComponent();
-		if (!access)
-		{
-			why = "no-access";
-			return false;
-		}
-
-		CacheSlot();
-		if (!m_Slot)
-		{
-			why = "no-slot";
-			return false;
-		}
-
-		IEntity owner = GetOwner();
-		if (!owner)
-		{
-			why = "no-owner";
-			return false;
-		}
-
-		m_Slot.SetCharacterHasCollision(false);
-
-		if (m_bBoardQueued)
-		{
-			if (OccupantIsInCanopy(m_pJumper) || m_pJumper.IsInVehicle())
-			{
-				why = "queued-now-seated";
-				return true;
-			}
-
-			if (access.IsGettingIn())
-			{
-				why = "waiting-getin";
-				return false;
-			}
-
-			if (m_iBoardTries < 8)
-			{
-				why = "waiting-getin";
-				return false;
-			}
-
-			access.InterruptVehicleActionQueue(true, true, true);
-			m_bBoardQueued = false;
-			MHJ_Log.Warning("Canopy GetIn queue stalled; retry");
-		}
-
-		bool can = access.CanGetInVehicle(owner);
-		bool accessible = access.IsTargetVehicleAccessible(owner);
-		bool ok = access.GetInVehicle(owner, m_Slot, true, 0, ECloseDoorAfterActions.INVALID, true);
-		if (!ok)
-		{
-			why = "GetInVehicle-false";
-			if (!can)
-				why = why + " CanGetIn=0";
-			if (!accessible)
-				why = why + " Accessible=0";
-			return false;
-		}
-
-		m_bBoardQueued = true;
-		if (OccupantIsInCanopy(m_pJumper) || m_pJumper.IsInVehicle())
-		{
-			why = "ok-seated";
-			return true;
-		}
-
-		why = "waiting-getin";
-		return false;
+		m_bInputListening = false;
+		m_fListenTurn = 0;
+		m_fListenPitch = 0;
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected string BuildBoardDump()
+	protected void OnOwnerForward(float value, EActionTrigger reason)
 	{
-		IEntity owner = GetOwner();
-		string dump = "srv=" + MHJ_Log.Flag(Replication.IsServer());
-		dump = dump + " local=" + MHJ_Log.Flag(IsLocalOccupant());
+		m_fListenPitch = value;
+	}
 
-		if (owner)
-		{
-			dump = dump + " canopy=" + owner.GetOrigin().ToString();
-			ControllersManagerComponent ctrls = ControllersManagerComponent.Cast(owner.FindComponent(ControllersManagerComponent));
-			dump = dump + " ctrls=" + MHJ_Log.Flag(ctrls != null);
-			BaseCompartmentManagerComponent mgr = BaseCompartmentManagerComponent.Cast(owner.FindComponent(BaseCompartmentManagerComponent));
-			dump = dump + " mgr=" + MHJ_Log.Flag(mgr != null);
-			VehicleAnimationComponent vanim = VehicleAnimationComponent.Cast(owner.FindComponent(VehicleAnimationComponent));
-			dump = dump + " vanim=" + MHJ_Log.Flag(vanim != null);
-			if (m_Rpl)
-				dump = dump + " rplOwner=" + MHJ_Log.Flag(m_Rpl.IsOwner());
-			else
-				dump = dump + " rpl=0";
-		}
-
-		if (m_Slot)
-		{
-			dump = dump + " slot=" + m_Slot.GetCompartmentName();
-			int slotType = m_Slot.GetType();
-			dump = dump + " type=" + slotType.ToString();
-			dump = dump + " occ=" + MHJ_Log.Flag(m_Slot.IsOccupied());
-			dump = dump + " lock=" + MHJ_Log.Flag(m_Slot.IsGetInLocked());
-		}
-		else
-			dump = dump + " slot=0";
-
-		if (!m_pJumper)
-			return dump + " jumper=0";
-
-		dump = dump + " jumper=" + m_pJumper.GetOrigin().ToString();
-		dump = dump + " inVeh=" + MHJ_Log.Flag(m_pJumper.IsInVehicle());
-
-		CompartmentAccessComponent access = m_pJumper.GetCompartmentAccessComponent();
-		if (access)
-		{
-			dump = dump + " gettingIn=" + MHJ_Log.Flag(access.IsGettingIn());
-			if (owner)
-			{
-				dump = dump + " can=" + MHJ_Log.Flag(access.CanGetInVehicle(owner));
-				dump = dump + " acc=" + MHJ_Log.Flag(access.IsTargetVehicleAccessible(owner));
-			}
-		}
-
-		CharacterControllerComponent ctrl = m_pJumper.GetCharacterController();
-		if (ctrl)
-		{
-			dump = dump + " fall=" + MHJ_Log.Flag(ctrl.IsFalling());
-			dump = dump + " dead=" + MHJ_Log.Flag(ctrl.IsDead());
-			dump = dump + " uncon=" + MHJ_Log.Flag(ctrl.IsUnconscious());
-		}
-
-		CharacterAnimationComponent anim = m_pJumper.GetAnimationComponent();
-		if (anim)
-		{
-			MHJ_HaloCommand halo = MHJ_HaloCommand.Cast(anim.GetCommandScripted());
-			dump = dump + " haloCmd=" + MHJ_Log.Flag(halo != null);
-			if (halo)
-				dump = dump + " haloFin=" + MHJ_Log.Flag(halo.IsFlagFinished());
-		}
-
-		SCR_CharacterCommandHandlerComponent handler = SCR_CharacterCommandHandlerComponent.Cast(m_pJumper.FindComponent(SCR_CharacterCommandHandlerComponent));
-		if (handler)
-			dump = dump + " jumping=" + MHJ_Log.Flag(handler.MHJ_IsHaloJumping());
-
-		return dump;
+	//------------------------------------------------------------------------------------------------
+	protected void OnOwnerRight(float value, EActionTrigger reason)
+	{
+		m_fListenTurn = value;
 	}
 
 	//------------------------------------------------------------------------------------------------
 	protected void FinishLanding()
 	{
-		if (m_bLanding)
+		if (!IsAuthority() || m_bLanding)
 			return;
 
 		m_bLanding = true;
-		m_bActive = false;
+		m_bServerSession = false;
+		m_bApplyLandingResult = true;
 
-		float landDown = -m_fVelY;
-		if (landDown < 0)
-			landDown = 0;
+		m_fLandDown = -m_fVelY;
+		if (m_fLandDown < 0)
+			m_fLandDown = 0;
+		vector horizontal = m_vWorldVel;
+		horizontal[1] = 0;
+		m_fLandHorizontal = horizontal.Length();
+		m_fLandHeading = m_fHeading;
 
-		vector landHoriz = m_vWorldVel;
-		landHoriz[1] = 0;
-		float landHorizSpeed = landHoriz.Length();
-		float landHeading = m_fHeading;
-
-		MHJ_Log.Info("Canopy land agl=" + GetAgl().ToString() + " down=" + landDown.ToString() + " hs=" + landHorizSpeed.ToString());
-
-		ChimeraCharacter jumper = m_pJumper;
-		GetOutOccupant();
-		RestoreLookLimits();
-
-		if (m_bHudOwned)
-		{
-			MHJ_JumpHud.Close();
-			m_bHudOwned = false;
-		}
-
-		if (jumper)
-		{
-			SCR_CharacterCommandHandlerComponent handler = SCR_CharacterCommandHandlerComponent.Cast(jumper.FindComponent(SCR_CharacterCommandHandlerComponent));
-			if (handler)
-				handler.MHJ_FinishCanopyLanding(landDown, landHorizSpeed, landHeading);
-		}
-
-		m_iDeleteTries = 0;
-		if (Replication.IsServer())
-			GetGame().GetCallqueue().CallLater(TryDeleteAfterLeave, 50, false);
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected void TryDeleteAfterLeave()
-	{
-		if (!Replication.IsServer())
-			return;
-
-		bool stillIn = false;
-		if (m_pJumper)
-		{
-			CompartmentAccessComponent access = m_pJumper.GetCompartmentAccessComponent();
-			if (access && access.IsInCompartment())
-				stillIn = true;
-		}
-
-		if (stillIn)
-		{
-			GetOutOccupant();
-			m_iDeleteTries = m_iDeleteTries + 1;
-			if (m_iDeleteTries < 40)
-			{
-				GetGame().GetCallqueue().CallLater(TryDeleteAfterLeave, 50, false);
-				return;
-			}
-
-			MHJ_Log.Warning("Canopy still occupied; not deleting to avoid A-pose");
-			return;
-		}
-
-		bool stillLinked = false;
-		if (m_pJumper)
-		{
-			IEntity parent = m_pJumper.GetParent();
-			if (parent)
-			{
-				IEntity root = parent.GetRootParent();
-				IEntity owner = GetOwner();
-				if (parent == owner)
-					parent.RemoveChild(m_pJumper, true);
-				else if (root == owner)
-					parent.RemoveChild(m_pJumper, true);
-			}
-
-			CharacterAnimationComponent anim = m_pJumper.GetAnimationComponent();
-			if (anim && anim.PhysicsIsLinked())
-				stillLinked = true;
-		}
-
-		if (stillLinked)
-		{
-			m_iDeleteTries = m_iDeleteTries + 1;
-			if (m_iDeleteTries < 40)
-			{
-				GetGame().GetCallqueue().CallLater(TryDeleteAfterLeave, 50, false);
-				return;
-			}
-
-			MHJ_Log.Warning("Canopy still physics-linked; deleting anyway");
-		}
-
+		MHJ_Log.Land("agl=" + GetAgl().ToString() + " down=" + m_fLandDown.ToString() + " hs=" + m_fLandHorizontal.ToString() + " boarded=" + MHJ_Log.Flag(m_bBoarded));
 		SleepPhysics();
-		DeleteSelf();
+		if (IsOwnedHere())
+			RpcDo_MHJ_Landing(m_fLandDown, m_fLandHorizontal, m_fLandHeading);
+		else
+			Rpc(RpcDo_MHJ_Landing, m_fLandDown, m_fLandHorizontal, m_fLandHeading);
+		AskOwnerToExitOnce();
+		GetGame().GetCallqueue().CallLater(MHJ_DeleteAfterExit, MHJ_Constants.CANOPY_DELETE_DELAY_MS, false);
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected void DeleteSelf()
+	[RplRpc(RplChannel.Reliable, RplRcver.Owner)]
+	protected void RpcDo_MHJ_Landing(float downSpeed, float horizontalSpeed, float heading)
 	{
-		IEntity owner = GetOwner();
-		if (!owner)
-			return;
-		if (!Replication.IsServer())
-			return;
+		m_bLanding = true;
+		m_bOwnerSession = false;
+		DisableOwnerControls();
+		MHJ_JumpHud.Close();
 
-		SCR_EntityHelper.DeleteEntityAndChildren(owner);
+		SCR_PlayerController playerController = SCR_PlayerController.Cast(GetGame().GetPlayerController());
+		if (playerController)
+			playerController.MHJ_BeginOwnerCanopyExit(downSpeed, horizontalSpeed, heading);
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected void GetOutOccupant()
+	protected void AskOwnerToExitOnce()
 	{
+		if (m_bExitAsked)
+			return;
 		if (!m_pJumper)
 			return;
-
-		CompartmentAccessComponent access = m_pJumper.GetCompartmentAccessComponent();
-		if (!access)
-			return;
-		if (!access.IsInCompartment())
+		SCR_CompartmentAccessComponent access = SCR_CompartmentAccessComponent.Cast(m_pJumper.GetCompartmentAccessComponent());
+		if (!access || !access.IsInCompartment())
 			return;
 
-		bool canOut = access.CanGetOutVehicle();
-		bool canDoor = access.CanGetOutVehicleViaDoor(0);
-		MHJ_Log.Info("Canopy GetOut can=" + MHJ_Log.Flag(canOut) + " door0=" + MHJ_Log.Flag(canDoor) + " gettingOut=" + MHJ_Log.Flag(access.IsGettingOut()));
+		m_bExitAsked = true;
+		access.AskOwnerToGetOutFromVehicle(EGetOutType.TELEPORT, 0, ECloseDoorAfterActions.LEAVE_OPEN, true, true);
+		MHJ_Log.Land("AskOwner GetOut TELEPORT on-spot");
+	}
 
-		bool ragdoll = false;
-		if (m_iDeleteTries >= 10)
-			ragdoll = true;
+	//------------------------------------------------------------------------------------------------
+	protected void MHJ_DeleteAfterExit()
+	{
+		if (!IsAuthority())
+			return;
 
-		int playerId = GetGame().GetPlayerManager().GetPlayerIdFromControlledEntity(m_pJumper);
-		PlayerController pc = GetGame().GetPlayerManager().GetPlayerController(playerId);
-		SCR_PlayerController scrPc = SCR_PlayerController.Cast(pc);
-		if (scrPc)
+		AskOwnerToExitOnce();
+
+		if (m_pJumper)
 		{
-			scrPc.MHJ_AskLeaveCanopy(ragdoll);
-			return;
+			SCR_CharacterCommandHandlerComponent handler = SCR_CharacterCommandHandlerComponent.Cast(m_pJumper.FindComponent(SCR_CharacterCommandHandlerComponent));
+			if (handler)
+			{
+				if (m_bApplyLandingResult || m_bBoarded)
+					handler.MHJ_OnCanopyExited(m_fLandDown, m_fLandHorizontal, m_fLandHeading);
+				else
+					handler.MHJ_CanopyBoardFailed();
+			}
 		}
 
-		vector mat[4];
-		m_pJumper.GetTransform(mat);
-		SCR_CharacterCommandHandlerComponent landHandler = SCR_CharacterCommandHandlerComponent.Cast(m_pJumper.FindComponent(SCR_CharacterCommandHandlerComponent));
-		if (landHandler)
-			landHandler.MHJ_FillGroundedTransform(m_pJumper, mat);
-		else
-			mat[3] = m_pJumper.GetOrigin();
-		access.GetOutVehicle_NoDoor(mat, ragdoll, true, true);
-	}
+		int playerId = m_iExpectedPlayerId;
+		PlayerController controller = GetGame().GetPlayerManager().GetPlayerController(playerId);
+		SCR_PlayerController playerController = SCR_PlayerController.Cast(controller);
+		if (playerController)
+			playerController.MHJ_ServerCanopyDeleted(GetOwner());
 
-	//------------------------------------------------------------------------------------------------
-	protected void GiveOwnership(notnull ChimeraCharacter jumper)
-	{
-		if (!m_Rpl)
-			m_Rpl = RplComponent.Cast(GetOwner().FindComponent(RplComponent));
-		if (!m_Rpl)
-			return;
-
-		int playerId = GetGame().GetPlayerManager().GetPlayerIdFromControlledEntity(jumper);
-		if (playerId <= 0)
-			return;
-
-		PlayerController pc = GetGame().GetPlayerManager().GetPlayerController(playerId);
-		if (!pc)
-			return;
-
-		m_Rpl.GiveExt(pc.GetRplIdentity(), true);
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected void SleepPhysics()
-	{
+		ClearOwnerStreaming();
 		IEntity owner = GetOwner();
-		if (!owner)
-			return;
+		if (owner)
+			RplComponent.DeleteRplEntity(owner, false);
+	}
 
-		Physics phys = owner.GetPhysics();
-		if (!phys)
-			return;
+	//------------------------------------------------------------------------------------------------
+	protected bool ValidateSessionCharacter()
+	{
+		if (!m_pJumper)
+			return false;
+		IEntity controlled = GetGame().GetPlayerManager().GetPlayerControlledEntity(m_iExpectedPlayerId);
+		return controlled == m_pJumper;
+	}
 
-		phys.SetVelocity(vector.Zero);
-		phys.SetAngularVelocity(vector.Zero);
-		phys.SetActive(ActiveState.INACTIVE);
+	//------------------------------------------------------------------------------------------------
+	protected bool ValidateExpectedOccupant()
+	{
+		if (!ValidateSessionCharacter())
+			return false;
+		CacheSlot();
+		if (!m_Slot)
+			return false;
+		return m_Slot.GetOccupant() == m_pJumper;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected bool IsLocalOccupant()
+	{
+		if (!m_pJumper)
+			return false;
+		return SCR_PlayerController.GetLocalControlledEntity() == m_pJumper && OccupantIsInCanopy(m_pJumper);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected bool IsAuthority()
+	{
+		if (!m_Rpl)
+			return false;
+		return m_Rpl.Role() == RplRole.Authority;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected bool IsOwnedHere()
+	{
+		if (!m_Rpl)
+			return false;
+		return m_Rpl.IsOwner();
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -691,169 +712,255 @@ class MHJ_CanopyFlight : ScriptComponent
 		IEntity owner = GetOwner();
 		if (!owner)
 			return;
-
-		BaseCompartmentManagerComponent mgr = BaseCompartmentManagerComponent.Cast(owner.FindComponent(BaseCompartmentManagerComponent));
-		if (!mgr)
+		BaseCompartmentManagerComponent manager = BaseCompartmentManagerComponent.Cast(owner.FindComponent(BaseCompartmentManagerComponent));
+		if (!manager)
 			return;
 
 		ref array<BaseCompartmentSlot> slots = new array<BaseCompartmentSlot>();
-		mgr.GetCompartments(slots);
-
+		manager.GetCompartments(slots);
+		int count = slots.Count();
 		int i;
-		for (i = 0; i < slots.Count(); i++)
+		for (i = 0; i < count; i++)
 		{
 			BaseCompartmentSlot slot = slots[i];
-			if (!slot)
-				continue;
-			if (slot.GetType() != ECompartmentType.CARGO)
-				continue;
-
-			m_Slot = slot;
-			return;
+			if (slot && slot.GetType() == ECompartmentType.CARGO)
+			{
+				m_Slot = slot;
+				return;
+			}
 		}
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected void AdoptOccupant()
+	protected void WakePhysics()
 	{
-		CacheSlot();
-		if (!m_Slot)
+		IEntity owner = m_Owner;
+		if (!owner)
+			owner = GetOwner();
+		if (!owner)
 			return;
 
-		IEntity occ = m_Slot.GetOccupant();
-		if (!occ)
+		Physics physics = owner.GetPhysics();
+		if (!physics)
 			return;
 
-		ChimeraCharacter pawn = ChimeraCharacter.Cast(occ);
-		if (!pawn)
+		physics.EnableGravity(false);
+		physics.SetActive(ActiveState.ACTIVE);
+		physics.SetAngularVelocity(vector.Zero);
+		physics.SetVelocity(m_vWorldVel);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! Gravity plus the canopy COM offset will tumble the cargo. Script heading
+	//! owns orientation, so kill spin on every physics step.
+	protected void LockCanopySpin(IEntity owner)
+	{
+		if (!owner)
+			owner = GetOwner();
+		if (!owner)
 			return;
 
-		m_pJumper = pawn;
-		CharacterControllerComponent ctrl = pawn.GetCharacterController();
-		if (ctrl)
-			m_Input = ctrl.GetInputContext();
+		Physics physics = owner.GetPhysics();
+		if (!physics)
+			return;
 
-		if (IsLocalOccupant() && !m_bHudOwned)
+		physics.SetAngularVelocity(vector.Zero);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void SleepPhysics()
+	{
+		IEntity owner = m_Owner;
+		if (!owner)
+			owner = GetOwner();
+		if (!owner)
+			return;
+
+		Physics physics = owner.GetPhysics();
+		if (!physics)
+			return;
+
+		physics.EnableGravity(false);
+		physics.SetVelocity(vector.Zero);
+		physics.SetAngularVelocity(vector.Zero);
+		physics.SetActive(ActiveState.INACTIVE);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void ClearOwnerStreaming()
+	{
+		if (!m_Rpl)
+			return;
+
+		PlayerController controller = GetGame().GetPlayerManager().GetPlayerController(m_iExpectedPlayerId);
+		if (!controller)
+			return;
+
+		RplIdentity identity = controller.GetRplIdentity();
+		if (!identity.IsValid())
+			return;
+
+		m_Rpl.EnableStreamingConNode(identity, false);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void ApplyAuthorityMotion()
+	{
+		if (!IsAuthority())
+			return;
+
+		IEntity owner = m_Owner;
+		if (!owner)
+			owner = GetOwner();
+		if (!owner)
+			return;
+
+		Physics physics = owner.GetPhysics();
+		if (!physics)
+			return;
+
+		vector previousOrigin = owner.GetOrigin();
+		ApplyAuthorityOrientation();
+
+		physics.EnableGravity(false);
+		physics.SetAngularVelocity(vector.Zero);
+		physics.SetVelocity(m_vWorldVel);
+		physics.SetActive(ActiveState.ACTIVE);
+		if (m_Rpl)
+			m_Rpl.ForceNodeMovement(previousOrigin);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void ApplyAuthorityOrientation()
+	{
+		IEntity owner = m_Owner;
+		if (!owner)
+			owner = GetOwner();
+		if (!owner)
+			return;
+
+		vector ypr;
+		ypr[0] = m_fHeading * Math.RAD2DEG;
+		ypr[1] = ClampDivePitch(m_fPitch);
+		ypr[2] = m_fBank;
+		owner.SetYawPitchRoll(ypr);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void LogCanopyTick(float timeSlice, float agl)
+	{
+		m_fDiagTime = m_fDiagTime + timeSlice;
+		if (m_fDiagTime < 2)
+			return;
+		m_fDiagTime = 0;
+
+		IEntity owner = GetOwner();
+		float y = 0;
+		if (owner)
+			y = owner.GetOrigin()[1];
+
+		MHJ_Log.Info("Canopy tick boarded=" + MHJ_Log.Flag(m_bBoarded) + " agl=" + agl.ToString() + " tas=" + m_fAirspeed.ToString() + " vy=" + m_fVelY.ToString() + " y=" + y.ToString());
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void SendFlightState(float timeSlice)
+	{
+		m_fStateSendTime = m_fStateSendTime + timeSlice;
+		if (m_fStateSendTime < 0.05)
+			return;
+		m_fStateSendTime = 0;
+
+		IEntity owner = m_Owner;
+		if (!owner)
+			owner = GetOwner();
+		if (!owner)
+			return;
+
+		vector ypr;
+		ypr[0] = m_fHeading * Math.RAD2DEG;
+		ypr[1] = ClampDivePitch(m_fPitch);
+		ypr[2] = m_fBank;
+		Rpc(RpcDo_MHJ_FlightState, m_vWorldVel, m_vWind, ModeToId(m_sFlightMode), m_fOpenT, m_fPathDeg, m_fHeading, owner.GetOrigin(), ypr);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	[RplRpc(RplChannel.Unreliable, RplRcver.Broadcast)]
+	protected void RpcDo_MHJ_FlightState(vector worldVelocity, vector wind, int modeId, float openTime, float pathDeg, float heading, vector origin, vector ypr)
+	{
+		if (IsAuthority())
+			return;
+
+		m_vWorldVel = worldVelocity;
+		m_vWind = wind;
+		m_sFlightMode = IdToMode(modeId);
+		m_fOpenT = openTime;
+		m_fPathDeg = pathDeg;
+		m_fHeading = heading;
+		SyncSpeedFromWorld();
+		ApplyReplicaPose(origin, ypr, worldVelocity);
+
+		if (m_bOwnerSession && !m_bSnatchFired)
 		{
-			if (!MHJ_JumpHud.IsOpen())
-				MHJ_JumpHud.Open();
-			m_bHudOwned = true;
-			WidenLookLimits();
+			if (MHJ_FlightAero.CanopyInflation(m_fOpenT) > 0.45)
+			{
+				m_bSnatchFired = true;
+				SCR_CameraShakeManagerComponent.AddCameraShake(0.85, 1.35, 0.04, 0.28, 0.55);
+			}
 		}
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected bool HasOccupant()
+	protected int ModeToId(string mode)
 	{
-		CacheSlot();
-		if (m_Slot && m_Slot.IsOccupied())
-			return true;
-		if (!m_pJumper)
-			return false;
-		if (OccupantIsInCanopy(m_pJumper))
-			return true;
-
-		CharacterCommandHandlerComponent handler = m_pJumper.GetCommandHandler();
-		if (handler && handler.GetCommandVehicle())
-			return true;
-		return false;
+		if (mode == "STALL")
+			return 1;
+		if (mode == "FLARE")
+			return 2;
+		if (mode == "BRAKES")
+			return 3;
+		if (mode == "DIVE")
+			return 4;
+		if (mode == "GLIDE")
+			return 5;
+		return 0;
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected bool IsAuthority()
+	protected string IdToMode(int modeId)
 	{
-		return Replication.IsServer();
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected bool IsOwner()
-	{
-		if (IsLocalOccupant())
-			return true;
-		return Replication.IsServer();
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected bool IsLocalOccupant()
-	{
-		if (!m_pJumper)
-			return false;
-
-		IEntity localChar = SCR_PlayerController.GetLocalControlledEntity();
-		if (!localChar)
-			return false;
-		return localChar == m_pJumper;
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected void ReadInput()
-	{
-		m_fTurnInput = 0;
-		m_fPitchInput = 0;
-
-		InputManager im = GetGame().GetInputManager();
-		if (im)
-		{
-			m_fTurnInput = im.GetActionValue("CharacterRight");
-			m_fPitchInput = im.GetActionValue("CharacterForward");
-
-			float steer = im.GetActionValue("VehicleSteer");
-			float throttle = im.GetActionValue("VehicleThrottle");
-			if (m_fTurnInput > -0.12 && m_fTurnInput < 0.12)
-				m_fTurnInput = steer;
-			if (m_fPitchInput > -0.12 && m_fPitchInput < 0.12)
-				m_fPitchInput = throttle;
-		}
-
-		if (m_Input)
-		{
-			float moveSpeed;
-			vector locDir;
-			m_Input.GetMovement(moveSpeed, locDir);
-			if (m_fTurnInput > -0.12 && m_fTurnInput < 0.12)
-				m_fTurnInput = locDir[0];
-			if (m_fPitchInput > -0.12 && m_fPitchInput < 0.12)
-				m_fPitchInput = locDir[2];
-		}
-
-		if (m_fTurnInput > 1)
-			m_fTurnInput = 1;
-		if (m_fTurnInput < -1)
-			m_fTurnInput = -1;
-		if (m_fPitchInput > 1)
-			m_fPitchInput = 1;
-		if (m_fPitchInput < -1)
-			m_fPitchInput = -1;
-
-		if (m_fTurnInput > -0.12 && m_fTurnInput < 0.12)
-			m_fTurnInput = 0;
-		if (m_fPitchInput > -0.12 && m_fPitchInput < 0.12)
-			m_fPitchInput = 0;
+		if (modeId == 1)
+			return "STALL";
+		if (modeId == 2)
+			return "FLARE";
+		if (modeId == 3)
+			return "BRAKES";
+		if (modeId == 4)
+			return "DIVE";
+		if (modeId == 5)
+			return "GLIDE";
+		return "OPENING";
 	}
 
 	//------------------------------------------------------------------------------------------------
 	protected void ApplyCanopy(float pDt, float agl)
 	{
 		m_fOpenT = m_fOpenT + pDt;
-		float infl = MHJ_FlightAero.CanopyInflation(m_fOpenT);
+		float inflation = MHJ_FlightAero.CanopyInflation(m_fOpenT);
 
 		float pitchTarget = m_fPitchInput;
-		if (agl < MHJ_Constants.FLARE_AGL)
+		if (agl < MHJ_Constants.FLARE_AGL && m_fPitchInput < 0.12)
 		{
-			if (m_fPitchInput < 0.12)
-			{
-				float span = MHJ_Constants.FLARE_AGL - MHJ_Constants.FLARE_END_AGL;
-				if (span < 0.5)
-					span = 0.5;
-				float autoFlare = 1 - (agl - MHJ_Constants.FLARE_END_AGL) / span;
-				if (autoFlare < 0)
-					autoFlare = 0;
-				if (autoFlare > 1)
-					autoFlare = 1;
-				float want = -autoFlare;
-				if (want < pitchTarget)
-					pitchTarget = want;
-			}
+			float span = MHJ_Constants.FLARE_AGL - MHJ_Constants.FLARE_END_AGL;
+			if (span < 0.5)
+				span = 0.5;
+			float autoFlare = 1 - (agl - MHJ_Constants.FLARE_END_AGL) / span;
+			if (autoFlare < 0)
+				autoFlare = 0;
+			if (autoFlare > 1)
+				autoFlare = 1;
+			float wantedPitch = -autoFlare;
+			if (wantedPitch < pitchTarget)
+				pitchTarget = wantedPitch;
 		}
 
 		m_fTurnFilt = Math.SmoothCD(m_fTurnFilt, m_fTurnInput, m_fTurnFiltV, MHJ_Constants.STEER_FILTER_TIME, MHJ_Constants.STEER_FILTER_MAX, pDt);
@@ -865,7 +972,6 @@ class MHJ_CanopyFlight : ScriptComponent
 			pitchInTime = MHJ_Constants.CANOPY_DIVE_IN_TIME;
 			pitchInMax = MHJ_Constants.CANOPY_DIVE_IN_MAX;
 		}
-
 		m_fPitchInputFilt = Math.SmoothCD(m_fPitchInputFilt, pitchTarget, m_fPitchInputFiltV, pitchInTime, pitchInMax, pDt);
 
 		float dive = 0;
@@ -875,52 +981,38 @@ class MHJ_CanopyFlight : ScriptComponent
 		if (m_fPitchInputFilt < 0)
 			brake = -m_fPitchInputFilt;
 
-		float wantPath = MHJ_FlightAero.CanopyDemandPathDeg(dive, brake);
-		m_fPathDeg = Math.SmoothCD(m_fPathDeg, wantPath, m_fPathDegV, MHJ_Constants.CANOPY_PATH_INERTIA, MHJ_Constants.CANOPY_PATH_IN_MAX, pDt);
+		float wantedPath = MHJ_FlightAero.CanopyDemandPathDeg(dive, brake);
+		m_fPathDeg = Math.SmoothCD(m_fPathDeg, wantedPath, m_fPathDegV, MHJ_Constants.CANOPY_PATH_INERTIA, MHJ_Constants.CANOPY_PATH_IN_MAX, pDt);
 
-		float infl01 = infl;
-		if (infl01 > 1)
-			infl01 = 1;
-		if (infl01 < 0)
-			infl01 = 0;
+		float inflation01 = inflation;
+		if (inflation01 > 1)
+			inflation01 = 1;
+		if (inflation01 < 0)
+			inflation01 = 0;
 
-		m_fHeading = WrapHeading(m_fHeading + m_fTurnFilt * MHJ_Constants.CANOPY_TURN_RATE * infl01 * pDt);
+		m_fHeading = WrapHeading(m_fHeading + m_fTurnFilt * MHJ_Constants.CANOPY_TURN_RATE * inflation01 * pDt);
 
-		float wantBank = m_fTurnFilt * MHJ_Constants.CANOPY_BANK_MAX * infl01;
-		wantBank = wantBank + Math.PerlinNoise(m_fSimT * 0.55, 2.2) * 3.5 * infl01;
-		m_fBank = Math.SmoothCD(m_fBank, wantBank, m_fBankV, MHJ_Constants.CANOPY_BANK_INERTIA, 80, pDt);
+		float wantedBank = m_fTurnFilt * MHJ_Constants.CANOPY_BANK_MAX * inflation01;
+		wantedBank = wantedBank + Math.PerlinNoise(m_fSimT * 0.55, 2.2) * 3.5 * inflation01;
+		m_fBank = Math.SmoothCD(m_fBank, wantedBank, m_fBankV, MHJ_Constants.CANOPY_BANK_INERTIA, 80, pDt);
 
-		float wantPitch = MHJ_Constants.CANOPY_PITCH_CRUISE;
-		wantPitch = wantPitch + dive * (MHJ_Constants.CANOPY_PITCH_DIVE - MHJ_Constants.CANOPY_PITCH_CRUISE);
-		wantPitch = wantPitch + brake * (MHJ_Constants.CANOPY_PITCH_FLARE - MHJ_Constants.CANOPY_PITCH_CRUISE);
+		float wantedPitch = MHJ_Constants.CANOPY_PITCH_CRUISE;
+		wantedPitch = wantedPitch + dive * (MHJ_Constants.CANOPY_PITCH_DIVE - MHJ_Constants.CANOPY_PITCH_CRUISE);
+		wantedPitch = wantedPitch + brake * (MHJ_Constants.CANOPY_PITCH_FLARE - MHJ_Constants.CANOPY_PITCH_CRUISE);
 		if (m_fOpenT < MHJ_Constants.CANOPY_OPEN_TIME)
 		{
-			float snatch = infl;
+			float snatch = inflation;
 			if (snatch > 1)
 				snatch = 1;
-			wantPitch = wantPitch + snatch * MHJ_Constants.CANOPY_PITCH_SNATCH;
+			wantedPitch = wantedPitch + snatch * MHJ_Constants.CANOPY_PITCH_SNATCH;
 		}
+		m_fPitch = Math.SmoothCD(m_fPitch, ClampDivePitch(wantedPitch), m_fPitchV, MHJ_Constants.CANOPY_PITCH_INERTIA, 120, pDt);
 
-		wantPitch = ClampDivePitch(wantPitch);
-		m_fPitch = Math.SmoothCD(m_fPitch, wantPitch, m_fPitchV, MHJ_Constants.CANOPY_PITCH_INERTIA, 120, pDt);
-		ClampAppliedDivePitch();
+		SteerCanopyTowardHeading(pDt, inflation01);
 
-		if (!m_bSnatchFired)
-		{
-			if (infl > 0.45)
-			{
-				m_bSnatchFired = true;
-				if (IsLocalOccupant())
-					SCR_CameraShakeManagerComponent.AddCameraShake(0.85, 1.35, 0.04, 0.28, 0.55);
-			}
-		}
-
-		SteerCanopyTowardHeading(pDt, infl01);
-
-		float tas = m_fAirspeed;
-		if (infl01 < 0.92)
+		if (inflation01 < 0.92)
 			m_sFlightMode = "OPENING";
-		else if (tas < MHJ_Constants.CANOPY_STALL_SPEED + 0.6)
+		else if (m_fAirspeed < MHJ_Constants.CANOPY_STALL_SPEED + 0.6)
 			m_sFlightMode = "STALL";
 		else if (brake > 0.62)
 			m_sFlightMode = "FLARE";
@@ -941,20 +1033,20 @@ class MHJ_CanopyFlight : ScriptComponent
 		if (pDt > 0.033)
 			steps = 3;
 
-		float h = pDt / steps;
+		float stepTime = pDt / steps;
 		int i;
 		for (i = 0; i < steps; i++)
-			IntegrateCanopyStep(h);
+			IntegrateCanopyStep(stepTime);
 
-		float spd = m_vWorldVel.Length();
-		if (spd > MHJ_Constants.CANOPY_MAX_TAS)
-			m_vWorldVel = m_vWorldVel * (MHJ_Constants.CANOPY_MAX_TAS / spd);
-
+		float speed = m_vWorldVel.Length();
+		if (speed > MHJ_Constants.CANOPY_MAX_TAS)
+			m_vWorldVel = m_vWorldVel * (MHJ_Constants.CANOPY_MAX_TAS / speed);
+		ClampCanopySpeed(pDt);
 		SyncSpeedFromWorld();
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected void IntegrateCanopyStep(float dt)
+	protected void IntegrateCanopyStep(float pDt)
 	{
 		IEntity owner = GetOwner();
 		float msl = 0;
@@ -962,14 +1054,14 @@ class MHJ_CanopyFlight : ScriptComponent
 			msl = owner.GetOrigin()[1];
 
 		float density = MHJ_FlightAero.DensityRatio(msl);
-		float infl = MHJ_FlightAero.CanopyInflation(m_fOpenT);
-		float infl01 = infl;
-		if (infl01 > 1)
-			infl01 = 1;
-		if (infl01 < 0)
-			infl01 = 0;
+		float inflation = MHJ_FlightAero.CanopyInflation(m_fOpenT);
+		float inflation01 = inflation;
+		if (inflation01 > 1)
+			inflation01 = 1;
+		if (inflation01 < 0)
+			inflation01 = 0;
 
-		m_vWorldVel[1] = m_vWorldVel[1] - MHJ_Constants.GRAVITY * dt;
+		m_vWorldVel[1] = m_vWorldVel[1] - MHJ_Constants.GRAVITY * pDt;
 
 		float dive = 0;
 		float brake = 0;
@@ -978,59 +1070,53 @@ class MHJ_CanopyFlight : ScriptComponent
 		if (m_fPitchInputFilt < 0)
 			brake = -m_fPitchInputFilt;
 
-		AlignCanopyPath(dt, infl01, dive, brake);
+		AlignCanopyPath(pDt, inflation01, dive, brake);
 
-		vector airVel = m_vWorldVel - m_vWind;
-		float tas = airVel.Length();
-		if (tas < 0.35)
+		vector airVelocity = m_vWorldVel - m_vWind;
+		float trueAirspeed = airVelocity.Length();
+		if (trueAirspeed < 0.35)
 			return;
 
-		vector airDir = airVel;
-		airDir.Normalize();
+		vector airDirection = airVelocity;
+		airDirection.Normalize();
 
-		float bodyDrag = MHJ_Constants.GRAVITY * density * tas * tas / (MHJ_Constants.FREEFALL_TERMINAL * MHJ_Constants.FREEFALL_TERMINAL);
-		float bodyBlend = 1 - infl01;
-		m_vWorldVel = m_vWorldVel - airDir * (bodyDrag * bodyBlend * dt);
-
-		if (infl < 0.04)
+		float bodyDrag = MHJ_Constants.GRAVITY * density * trueAirspeed * trueAirspeed / (MHJ_Constants.FREEFALL_TERMINAL * MHJ_Constants.FREEFALL_TERMINAL);
+		m_vWorldVel = m_vWorldVel - airDirection * (bodyDrag * (1 - inflation01) * pDt);
+		if (inflation < 0.04)
 			return;
 
-		float cl;
-		float cd;
-		MHJ_FlightAero.CanopyCoeff(dive, brake, tas, PathDiveAmount(), cl, cd);
-		cl = cl * infl;
-		cd = cd * infl;
+		float liftCoefficient;
+		float dragCoefficient;
+		MHJ_FlightAero.CanopyCoeff(dive, brake, trueAirspeed, PathDiveAmount(), liftCoefficient, dragCoefficient);
+		liftCoefficient = liftCoefficient * inflation;
+		dragCoefficient = dragCoefficient * inflation;
 
-		float area = MHJ_Constants.BODY_AREA + infl01 * infl01 * (MHJ_Constants.CANOPY_AREA - MHJ_Constants.BODY_AREA);
-		float q = 0.5 * MHJ_Constants.AIR_DENSITY_SL * density * tas * tas;
-		float liftF = q * cl * area;
-		float dragF = q * cd * area;
-		float invMass = 1 / MHJ_Constants.MASS;
+		float area = MHJ_Constants.BODY_AREA + inflation01 * inflation01 * (MHJ_Constants.CANOPY_AREA - MHJ_Constants.BODY_AREA);
+		float dynamicPressure = 0.5 * MHJ_Constants.AIR_DENSITY_SL * density * trueAirspeed * trueAirspeed;
+		float liftForce = dynamicPressure * liftCoefficient * area;
+		float dragForce = dynamicPressure * dragCoefficient * area;
+		float inverseMass = 1 / MHJ_Constants.MASS;
 
 		vector right = HeadingRight();
-		vector liftDir = SCR_Math3D.Cross(airDir, right);
-		float liftLen = liftDir.Length();
-		if (liftLen < 0.05)
+		vector liftDirection = SCR_Math3D.Cross(airDirection, right);
+		if (liftDirection.Length() < 0.05)
 		{
-			liftDir = Vector(0, 1, 0) - airDir * vector.Dot(Vector(0, 1, 0), airDir);
-			liftLen = liftDir.Length();
-			if (liftLen < 0.05)
-				liftDir = HeadingForward();
+			liftDirection = Vector(0, 1, 0) - airDirection * vector.Dot(Vector(0, 1, 0), airDirection);
+			if (liftDirection.Length() < 0.05)
+				liftDirection = HeadingForward();
 			else
-				liftDir.Normalize();
+				liftDirection.Normalize();
 		}
 		else
 		{
-			liftDir.Normalize();
-			if (vector.Dot(liftDir, Vector(0, 1, 0)) < 0)
-				liftDir = liftDir * -1;
+			liftDirection.Normalize();
+			if (vector.Dot(liftDirection, Vector(0, 1, 0)) < 0)
+				liftDirection = liftDirection * -1;
 		}
 
-		liftDir = RotateAroundAxis(liftDir, airDir, m_fBank * Math.DEG2RAD);
-
-		m_vWorldVel = m_vWorldVel + liftDir * (liftF * invMass * dt);
-		m_vWorldVel = m_vWorldVel - airDir * (dragF * invMass * dt);
-
+		liftDirection = RotateAroundAxis(liftDirection, airDirection, m_fBank * Math.DEG2RAD);
+		m_vWorldVel = m_vWorldVel + liftDirection * (liftForce * inverseMass * pDt);
+		m_vWorldVel = m_vWorldVel - airDirection * (dragForce * inverseMass * pDt);
 		if (m_vWorldVel[1] > MHJ_Constants.CANOPY_MAX_CLIMB)
 			m_vWorldVel[1] = MHJ_Constants.CANOPY_MAX_CLIMB;
 
@@ -1038,226 +1124,73 @@ class MHJ_CanopyFlight : ScriptComponent
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected void AlignCanopyPath(float dt, float infl01, float dive, float brake)
+	protected void AlignCanopyPath(float pDt, float inflation01, float dive, float brake)
 	{
-		if (infl01 < 0.04)
+		if (inflation01 < 0.04)
 			return;
 
-		vector airVel = m_vWorldVel - m_vWind;
-		float tas = airVel.Length();
-		if (tas < 0.35)
+		vector airVelocity = m_vWorldVel - m_vWind;
+		float trueAirspeed = airVelocity.Length();
+		if (trueAirspeed < 0.35)
 			return;
 
-		vector airDir = airVel;
-		airDir.Normalize();
-
+		vector airDirection = airVelocity;
+		airDirection.Normalize();
 		vector nose = CanopyPathNose(m_fPathDeg);
-		float align = MHJ_FlightAero.CanopyPathAlign(dive, brake);
-		float k = align * infl01 * dt;
-		if (k > 1)
-			k = 1;
+		float blend = MHJ_FlightAero.CanopyPathAlign(dive, brake) * inflation01 * pDt;
+		if (blend > 1)
+			blend = 1;
 
-		vector mixed = airDir + (nose - airDir) * k;
-		float mLen = mixed.Length();
-		if (mLen < 0.001)
+		vector mixed = airDirection + (nose - airDirection) * blend;
+		if (mixed.Length() < 0.001)
 			return;
-
 		mixed.Normalize();
-		mixed = ClampPathDir(mixed);
+		mixed = ClampPathDirection(mixed);
+
 		float pathDive = PathDiveAmount();
-		tas = tas + MHJ_Constants.CANOPY_DIVE_ACCEL * pathDive * infl01 * dt;
-		tas = MHJ_FlightAero.CanopyCoastBleed(tas, dive, brake, pathDive, dt);
-		m_vWorldVel = mixed * tas + m_vWind;
+		if (m_fOpenT >= MHJ_Constants.CANOPY_OPEN_TIME)
+			trueAirspeed = trueAirspeed + MHJ_Constants.CANOPY_DIVE_ACCEL * pathDive * inflation01 * pDt;
+		trueAirspeed = MHJ_FlightAero.CanopyCoastBleed(trueAirspeed, dive, brake, pathDive, pDt);
+		m_vWorldVel = mixed * trueAirspeed + m_vWind;
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected void SteerCanopyTowardHeading(float pDt, float infl01)
+	protected void SteerCanopyTowardHeading(float pDt, float inflation01)
 	{
-		if (infl01 < 0.2)
+		if (inflation01 < 0.2)
 			return;
 
 		vector air = m_vWorldVel - m_vWind;
-		vector horiz = air;
-		horiz[1] = 0;
-		float hs = horiz.Length();
-
+		vector horizontal = air;
+		horizontal[1] = 0;
+		float horizontalSpeed = horizontal.Length();
 		vector nose = HeadingForward();
 		float blend = MHJ_Constants.CANOPY_HEADING_LERP * pDt;
 		if (blend > 1)
 			blend = 1;
-		blend = blend * infl01;
+		blend = blend * inflation01;
 
-		vector newHoriz = vector.Zero;
-		if (hs < 0.5)
+		vector newHorizontal = vector.Zero;
+		if (horizontalSpeed < 0.5)
 		{
-			float kick = MHJ_Constants.CANOPY_CRUISE_TAS * 0.4 * infl01;
-			newHoriz[0] = nose[0] * kick;
-			newHoriz[2] = nose[2] * kick;
+			float kick = MHJ_Constants.CANOPY_CRUISE_TAS * 0.4 * inflation01;
+			newHorizontal[0] = nose[0] * kick;
+			newHorizontal[2] = nose[2] * kick;
 		}
 		else
 		{
-			vector curDir = horiz;
-			curDir.Normalize();
-			vector blended = curDir + (nose - curDir) * blend;
-			float bLen = blended.Length();
-			if (bLen < 0.001)
+			vector currentDirection = horizontal;
+			currentDirection.Normalize();
+			vector blended = currentDirection + (nose - currentDirection) * blend;
+			if (blended.Length() < 0.001)
 				return;
 			blended.Normalize();
-			newHoriz[0] = blended[0] * hs;
-			newHoriz[2] = blended[2] * hs;
+			newHorizontal[0] = blended[0] * horizontalSpeed;
+			newHorizontal[2] = blended[2] * horizontalSpeed;
 		}
 
-		m_vWorldVel[0] = m_vWind[0] + newHoriz[0];
-		m_vWorldVel[2] = m_vWind[2] + newHoriz[2];
-		SyncSpeedFromWorld();
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected void ApplyYawOnly()
-	{
-		ApplyYawWithDt(0);
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected void HoldAtJumper()
-	{
-		IEntity owner = GetOwner();
-		if (!owner)
-			return;
-		if (!m_pJumper)
-			return;
-
-		vector ypr;
-		ypr[0] = m_fHeading * Math.RAD2DEG;
-		ypr[1] = 0;
-		ypr[2] = 0;
-
-		vector mat[4];
-		Math3D.AnglesToMatrix(ypr, mat);
-		mat[3] = m_pJumper.GetOrigin();
-		owner.SetWorldTransform(mat);
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected void ApplyYawWithDt(float pDt)
-	{
-		IEntity owner = GetOwner();
-		if (!owner)
-			return;
-
-		vector ypr;
-		ypr[0] = m_fHeading * Math.RAD2DEG;
-		ypr[1] = 0;
-		ypr[2] = 0;
-
-		vector mat[4];
-		Math3D.AnglesToMatrix(ypr, mat);
-
-		vector origin = owner.GetOrigin();
-		origin[0] = origin[0] + m_vWorldVel[0] * pDt;
-		origin[1] = origin[1] + m_vWorldVel[1] * pDt;
-		origin[2] = origin[2] + m_vWorldVel[2] * pDt;
-		mat[3] = origin;
-		owner.SetWorldTransform(mat);
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected void ApplyAttitudeOnly()
-	{
-		ApplyWorldAttitudeWithDt(0);
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected void ApplyWorldAttitudeWithDt(float pDt)
-	{
-		IEntity owner = GetOwner();
-		if (!owner)
-			return;
-
-		vector ypr;
-		ypr[0] = m_fHeading * Math.RAD2DEG;
-		ypr[1] = ClampDivePitch(m_fPitch);
-		ypr[2] = m_fBank;
-
-		vector mat[4];
-		Math3D.AnglesToMatrix(ypr, mat);
-
-		vector origin = owner.GetOrigin();
-		origin[0] = origin[0] + m_vWorldVel[0] * pDt;
-		origin[1] = origin[1] + m_vWorldVel[1] * pDt;
-		origin[2] = origin[2] + m_vWorldVel[2] * pDt;
-		mat[3] = origin;
-		owner.SetWorldTransform(mat);
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected void LogCanopyDiag(float pDt)
-	{
-		m_fDiagT = m_fDiagT + pDt;
-		if (m_fDiagT < 0.5)
-			return;
-		m_fDiagT = 0;
-
-		IEntity owner = GetOwner();
-		string dump = "Canopy diag mode=" + m_sFlightMode;
-		dump = dump + " local=" + MHJ_Log.Flag(IsLocalOccupant());
-		dump = dump + " srv=" + MHJ_Log.Flag(Replication.IsServer());
-		dump = dump + " auth=" + MHJ_Log.Flag(IsAuthority());
-		dump = dump + " hdg=" + MHJ_Log.Deg(m_fHeading * Math.RAD2DEG);
-		dump = dump + " pitch=" + MHJ_Log.Deg(m_fPitch);
-		dump = dump + " bank=" + MHJ_Log.Deg(m_fBank);
-		dump = dump + " path=" + MHJ_Log.Deg(m_fPathDeg);
-		dump = dump + " turn=" + MHJ_Log.Deg(m_fTurnInput);
-		dump = dump + " pitchIn=" + MHJ_Log.Deg(m_fPitchInput);
-
-		if (owner)
-			dump = dump + " veh=" + MHJ_Log.Ypr(owner.GetYawPitchRoll());
-
-		if (m_pJumper)
-		{
-			dump = dump + " jumper=" + MHJ_Log.Ypr(m_pJumper.GetYawPitchRoll());
-			dump = dump + " inVeh=" + MHJ_Log.Flag(m_pJumper.IsInVehicle());
-
-			CompartmentAccessComponent access = m_pJumper.GetCompartmentAccessComponent();
-			if (access)
-			{
-				dump = dump + " inSeat=" + MHJ_Log.Flag(access.IsInCompartment());
-				dump = dump + " gettingIn=" + MHJ_Log.Flag(access.IsGettingIn());
-			}
-
-			CharacterAnimationComponent anim = m_pJumper.GetAnimationComponent();
-			if (anim)
-			{
-				dump = dump + " linked=" + MHJ_Log.Flag(anim.PhysicsIsLinked());
-				dump = dump + " falling=" + MHJ_Log.Flag(anim.PhysicsIsFalling());
-				ref CharacterMovementState st = new CharacterMovementState();
-				anim.GetMovementState(st);
-				dump = dump + " cmd=" + st.m_CommandTypeId.ToString();
-				dump = dump + " stance=" + st.m_iStanceIdx.ToString();
-			}
-
-			IEntity parent = m_pJumper.GetParent();
-			dump = dump + " parent=" + MHJ_Log.Flag(parent != null);
-
-			CharacterControllerComponent ctrl = m_pJumper.GetCharacterController();
-			if (ctrl)
-			{
-				dump = dump + " forceFL=" + MHJ_Log.Flag(ctrl.IsFreeLookForced());
-				CharacterInputContext input = ctrl.GetInputContext();
-				if (input)
-					dump = dump + " ctrlHdg=" + MHJ_Log.Deg(input.GetHeadingAngle() * Math.RAD2DEG);
-			}
-
-			SCR_CharacterCommandHandlerComponent handler = SCR_CharacterCommandHandlerComponent.Cast(m_pJumper.FindComponent(SCR_CharacterCommandHandlerComponent));
-			if (handler)
-			{
-				dump = dump + " vehCmd=" + MHJ_Log.Flag(handler.GetCommandVehicle() != null);
-				dump = dump + " moveCmd=" + MHJ_Log.Flag(handler.GetCommandMove() != null);
-				dump = dump + " inCanopy=" + MHJ_Log.Flag(handler.MHJ_IsInCanopySeat());
-			}
-		}
-
-		MHJ_Log.Info(dump);
+		m_vWorldVel[0] = m_vWind[0] + newHorizontal[0];
+		m_vWorldVel[2] = m_vWind[2] + newHorizontal[2];
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -1266,14 +1199,13 @@ class MHJ_CanopyFlight : ScriptComponent
 		if (pathDeg < -MHJ_Constants.DIVE_ANGLE_MAX)
 			pathDeg = -MHJ_Constants.DIVE_ANGLE_MAX;
 
-		float pr = pathDeg * Math.DEG2RAD;
-		float c = Math.Cos(pr);
-		float s = Math.Sin(pr);
-		vector n = vector.Zero;
-		n[0] = Math.Sin(m_fHeading) * c;
-		n[1] = s;
-		n[2] = Math.Cos(m_fHeading) * c;
-		return n;
+		float pathRadians = pathDeg * Math.DEG2RAD;
+		float cosine = Math.Cos(pathRadians);
+		vector nose = vector.Zero;
+		nose[0] = Math.Sin(m_fHeading) * cosine;
+		nose[1] = Math.Sin(pathRadians);
+		nose[2] = Math.Cos(m_fHeading) * cosine;
+		return nose;
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -1285,7 +1217,6 @@ class MHJ_CanopyFlight : ScriptComponent
 		float span = MHJ_Constants.CANOPY_PATH_CRUISE - MHJ_Constants.CANOPY_PATH_DIVE;
 		if (span < 1)
 			span = 1;
-
 		float amount = (MHJ_Constants.CANOPY_PATH_CRUISE - m_fPathDeg) / span;
 		if (amount > 1)
 			amount = 1;
@@ -1295,52 +1226,42 @@ class MHJ_CanopyFlight : ScriptComponent
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected vector ClampPathDir(vector dir)
+	protected vector ClampPathDirection(vector direction)
 	{
-		vector horiz = dir;
-		horiz[1] = 0;
-		float hs = horiz.Length();
-		float pathDeg = Math.Atan2(dir[1], hs) * Math.RAD2DEG;
+		vector horizontal = direction;
+		horizontal[1] = 0;
+		float pathDeg = Math.Atan2(direction[1], horizontal.Length()) * Math.RAD2DEG;
 		if (pathDeg >= -MHJ_Constants.DIVE_ANGLE_MAX)
-			return dir;
-
+			return direction;
 		return CanopyPathNose(-MHJ_Constants.DIVE_ANGLE_MAX);
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected void ClampCanopyAirDive()
-	{
-		vector air = m_vWorldVel - m_vWind;
-		float tas = air.Length();
-		if (tas < 0.35)
-			return;
-
-		vector clamped = ClampPathDir(air);
-		float cLen = clamped.Length();
-		if (cLen < 0.001)
-			return;
-
-		clamped.Normalize();
-		m_vWorldVel = clamped * tas + m_vWind;
-	}
-
-	//------------------------------------------------------------------------------------------------
-	//! Keep TAS from aero, but fly along the commanded path so a 85° visual dive is an 85° fall.
 	protected void SnapAirToPath()
 	{
 		vector air = m_vWorldVel - m_vWind;
-		float tas = air.Length();
-		if (tas < 0.35)
+		float trueAirspeed = air.Length();
+		if (trueAirspeed < 0.35)
 			return;
 
-		vector nose = CanopyPathNose(m_fPathDeg);
-		nose = ClampPathDir(nose);
-		float nLen = nose.Length();
-		if (nLen < 0.001)
+		vector nose = ClampPathDirection(CanopyPathNose(m_fPathDeg));
+		if (nose.Length() < 0.001)
 			return;
-
 		nose.Normalize();
-		m_vWorldVel = nose * tas + m_vWind;
+		m_vWorldVel = nose * trueAirspeed + m_vWind;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected float InitialPathFromVelocity(vector airVelocity)
+	{
+		if (airVelocity.Length() < 0.35)
+			return MHJ_Constants.CANOPY_PATH_CRUISE;
+		vector horizontal = airVelocity;
+		horizontal[1] = 0;
+		float pathDeg = Math.Atan2(airVelocity[1], horizontal.Length()) * Math.RAD2DEG;
+		if (pathDeg < -MHJ_Constants.DIVE_ANGLE_MAX)
+			pathDeg = -MHJ_Constants.DIVE_ANGLE_MAX;
+		return pathDeg;
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -1354,60 +1275,34 @@ class MHJ_CanopyFlight : ScriptComponent
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected void ClampAppliedDivePitch()
+	protected vector RotateAroundAxis(vector value, vector axis, float angle)
 	{
-		if (m_fPitch > MHJ_Constants.DIVE_ANGLE_MAX)
-		{
-			m_fPitch = MHJ_Constants.DIVE_ANGLE_MAX;
-			if (m_fPitchV > 0)
-				m_fPitchV = 0;
-		}
-		else if (m_fPitch < -MHJ_Constants.DIVE_ANGLE_MAX)
-		{
-			m_fPitch = -MHJ_Constants.DIVE_ANGLE_MAX;
-			if (m_fPitchV < 0)
-				m_fPitchV = 0;
-		}
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected void SyncSpeedFromWorld()
-	{
-		m_fVelY = m_vWorldVel[1];
-		vector air = m_vWorldVel - m_vWind;
-		m_fAirspeed = air.Length();
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected vector RotateAroundAxis(vector v, vector axis, float angle)
-	{
-		float axisLen = axis.Length();
-		if (axisLen < 0.001)
-			return v;
+		if (axis.Length() < 0.001)
+			return value;
 		if (angle > -0.0002 && angle < 0.0002)
-			return v;
+			return value;
 
-		float q[4];
-		SCR_Math3D.QuatAngleAxis(angle, axis, q);
-		return SCR_Math3D.QuatMultiply(q, v);
+		float quaternion[4];
+		SCR_Math3D.QuatAngleAxis(angle, axis, quaternion);
+		return SCR_Math3D.QuatMultiply(quaternion, value);
 	}
 
 	//------------------------------------------------------------------------------------------------
 	protected vector HeadingForward()
 	{
-		vector v = vector.Zero;
-		v[0] = Math.Sin(m_fHeading);
-		v[2] = Math.Cos(m_fHeading);
-		return v;
+		vector direction = vector.Zero;
+		direction[0] = Math.Sin(m_fHeading);
+		direction[2] = Math.Cos(m_fHeading);
+		return direction;
 	}
 
 	//------------------------------------------------------------------------------------------------
 	protected vector HeadingRight()
 	{
-		vector v = vector.Zero;
-		v[0] = Math.Cos(m_fHeading);
-		v[2] = -Math.Sin(m_fHeading);
-		return v;
+		vector direction = vector.Zero;
+		direction[0] = Math.Cos(m_fHeading);
+		direction[2] = -Math.Sin(m_fHeading);
+		return direction;
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -1422,99 +1317,150 @@ class MHJ_CanopyFlight : ScriptComponent
 	}
 
 	//------------------------------------------------------------------------------------------------
+	protected void ClampCanopySpeed(float pDt)
+	{
+		float dive = 0;
+		if (m_fPitchInputFilt > 0)
+			dive = m_fPitchInputFilt;
+
+		vector air = m_vWorldVel - m_vWind;
+		float tas = air.Length();
+		float maxTas = MHJ_Constants.CANOPY_MAX_TAS;
+		if (m_fOpenT < MHJ_Constants.CANOPY_OPEN_TIME)
+		{
+			float u = m_fOpenT / MHJ_Constants.CANOPY_OPEN_TIME;
+			if (u < 0)
+				u = 0;
+			if (u > 1)
+				u = 1;
+			maxTas = MHJ_Constants.FREEFALL_TERMINAL + (MHJ_Constants.CANOPY_CRUISE_TAS - MHJ_Constants.FREEFALL_TERMINAL) * u;
+		}
+
+		if (tas > maxTas && tas > 0.001)
+		{
+			air = air * (maxTas / tas);
+			m_vWorldVel = air + m_vWind;
+		}
+
+		float cap = MHJ_Constants.CANOPY_MAX_SINK;
+		float decel = MHJ_Constants.CANOPY_SINK_DECEL;
+		if (m_fOpenT < MHJ_Constants.CANOPY_OPEN_TIME)
+		{
+			float u = m_fOpenT / MHJ_Constants.CANOPY_OPEN_TIME;
+			if (u < 0)
+				u = 0;
+			if (u > 1)
+				u = 1;
+			cap = MHJ_Constants.FREEFALL_TERMINAL + (MHJ_Constants.CANOPY_MAX_SINK - MHJ_Constants.FREEFALL_TERMINAL) * u;
+			decel = MHJ_Constants.CANOPY_OPEN_SINK_DECEL;
+		}
+		else if (dive > 0.2)
+		{
+			return;
+		}
+
+		if (pDt <= 0)
+			return;
+		if (m_vWorldVel[1] >= -cap)
+			return;
+
+		float nextY = m_vWorldVel[1] + (decel * pDt);
+		if (nextY > -cap)
+			nextY = -cap;
+		m_vWorldVel[1] = nextY;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected bool IsBelowTerrain()
+	{
+		IEntity owner = GetOwner();
+		if (!owner)
+			return false;
+
+		vector position = owner.GetOrigin();
+		BaseWorld world = owner.GetWorld();
+		if (!world)
+			world = GetGame().GetWorld();
+		if (!world)
+			return false;
+
+		float terrainY = SCR_TerrainHelper.GetTerrainY(position, world, true);
+		return position[1] < terrainY;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! Cargo has no NwkMovementComponent. Native rpl will not move the replica;
+	//! apply the authority snapshot. Do not lerp eulers (gimbal snap) or enable gravity.
+	protected void ApplyReplicaPose(vector origin, vector ypr, vector worldVelocity)
+	{
+		IEntity owner = m_Owner;
+		if (!owner)
+			owner = GetOwner();
+		if (!owner)
+			return;
+
+		vector curOrigin = owner.GetOrigin();
+		vector delta = origin - curOrigin;
+		float snapM = MHJ_Constants.CANOPY_OWNER_SNAP_M;
+		if (delta.LengthSq() >= (snapM * snapM))
+			owner.SetOrigin(origin);
+		else
+			owner.SetOrigin(curOrigin + (delta * MHJ_Constants.CANOPY_OWNER_BLEND));
+
+		owner.SetYawPitchRoll(ypr);
+
+		Physics physics = owner.GetPhysics();
+		if (!physics)
+			return;
+
+		physics.EnableGravity(false);
+		physics.SetActive(ActiveState.ACTIVE);
+		physics.SetAngularVelocity(vector.Zero);
+		physics.SetVelocity(worldVelocity);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void SyncSpeedFromWorld()
+	{
+		m_fVelY = m_vWorldVel[1];
+		m_fAirspeed = (m_vWorldVel - m_vWind).Length();
+	}
+
+	//------------------------------------------------------------------------------------------------
 	protected float GetAgl()
 	{
 		IEntity owner = GetOwner();
 		if (!owner)
 			return 0;
 
-		vector pos = owner.GetOrigin();
-		if (m_pJumper)
-			pos = m_pJumper.GetOrigin();
-
+		vector position = owner.GetOrigin();
 		BaseWorld world = owner.GetWorld();
 		if (!world)
 			world = GetGame().GetWorld();
 		if (!world)
-			return pos[1];
+			return position[1];
 
-		float terrainAgl = SCR_TerrainHelper.GetHeightAboveTerrain(pos, world, true);
-		if (terrainAgl > 90)
-			return terrainAgl;
-
-		if (!m_AglTrace)
-			m_AglTrace = new TraceParam();
-		m_AglTrace.Flags = TraceFlags.WORLD | TraceFlags.ENTS;
-		m_AglTrace.Exclude = owner;
-		float surfaceY = SCR_TerrainHelper.GetTerrainY(pos, world, true, m_AglTrace);
-		return pos[1] - surfaceY;
+		float terrainAgl = SCR_TerrainHelper.GetHeightAboveTerrain(position, world, true);
+		if (terrainAgl < 0)
+			terrainAgl = 0;
+		return terrainAgl;
 	}
 
 	//------------------------------------------------------------------------------------------------
 	protected void PushHud(float agl)
 	{
-		if (!m_bHudOwned)
+		if (!m_bOwnerSession)
 			return;
 
-		vector fwd = HeadingForward();
-		vector windH = m_vWind;
-		windH[1] = 0;
-		float wSpeed = windH.Length();
+		vector forward = HeadingForward();
+		vector horizontalWind = m_vWind;
+		horizontalWind[1] = 0;
+		float windSpeed = horizontalWind.Length();
 		float headingDot = 0;
-		if (wSpeed > 0.05)
-			headingDot = vector.Dot(fwd, windH) / wSpeed;
+		if (windSpeed > 0.05)
+			headingDot = vector.Dot(forward, horizontalWind) / windSpeed;
 
-		string windRel = MHJ_FlightAero.WindRelativeLabel(wSpeed, headingDot);
-		MHJ_JumpHud.SetState(MHJ_EHaloPhase.CANOPY, agl, m_fOpenAltitude, m_fAirspeed, m_fVelY, m_sFlightMode, wSpeed, windRel);
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected void WidenLookLimits()
-	{
-		if (m_bLookWidened)
-			return;
-		if (!m_pJumper)
-			return;
-
-		m_pHeadAim = CharacterHeadAimingComponent.Cast(m_pJumper.FindComponent(CharacterHeadAimingComponent));
-		if (!m_pHeadAim)
-			return;
-
-		m_pHeadAim.SetLimitAnglesOverride(-89, 89, -360, 360);
-		m_bLookWidened = true;
-		KeepCanopyFreeLook();
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected void KeepCanopyFreeLook()
-	{
-		if (!m_pJumper)
-			return;
-
-		CharacterControllerComponent ctrl = m_pJumper.GetCharacterController();
-		if (ctrl)
-			ctrl.SetForcedFreeLook(true);
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected void RestoreLookLimits()
-	{
-		if (m_pJumper)
-		{
-			CharacterControllerComponent ctrl = m_pJumper.GetCharacterController();
-			if (ctrl)
-			{
-				ctrl.SetForcedFreeLook(false);
-				ctrl.SetFreeLook(false, false, false);
-			}
-
-			if (!m_pHeadAim)
-				m_pHeadAim = CharacterHeadAimingComponent.Cast(m_pJumper.FindComponent(CharacterHeadAimingComponent));
-		}
-
-		if (m_pHeadAim)
-			m_pHeadAim.ResetLimitAnglesOverride();
-		m_pHeadAim = null;
-		m_bLookWidened = false;
+		string windRelative = MHJ_FlightAero.WindRelativeLabel(windSpeed, headingDot);
+		MHJ_JumpHud.SetState(MHJ_EHaloPhase.CANOPY, agl, m_fOpenAltitude, m_fAirspeed, m_fVelY, m_sFlightMode, windSpeed, windRelative);
 	}
 }
