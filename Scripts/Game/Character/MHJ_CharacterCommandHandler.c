@@ -6,6 +6,7 @@
 modded class SCR_CharacterCommandHandlerComponent
 {
 	protected bool m_bMHJ_CanopySession;
+	protected bool m_bMHJ_ExitStarted;
 	protected float m_fMHJ_CanopyOpenAltitude;
 	protected float m_fMHJ_LandCarryRemain;
 	protected float m_fMHJ_LandCarryAnalog;
@@ -44,12 +45,14 @@ modded class SCR_CharacterCommandHandlerComponent
 		MHJ_EndFallDamageIgnore();
 		m_bMHJ_ProtectHaloFall = false;
 		m_bMHJ_CanopySession = false;
+		m_bMHJ_ExitStarted = false;
 	}
 
 	//------------------------------------------------------------------------------------------------
 	void MHJ_BeginCanopySession(float openAltitude)
 	{
 		m_bMHJ_CanopySession = true;
+		m_bMHJ_ExitStarted = false;
 		m_fMHJ_CanopyOpenAltitude = openAltitude;
 	}
 
@@ -58,7 +61,17 @@ modded class SCR_CharacterCommandHandlerComponent
 	void MHJ_PrepareCanopyBoard()
 	{
 		m_bMHJ_CanopySession = true;
+		m_bMHJ_ExitStarted = false;
 		MHJ_EnsureFallCommand();
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! Stop injecting Fall. Native GetOut owns infantry restoration from here,
+	//! matching ArmaReforgerParachutes.
+	void MHJ_BeginCanopyExit()
+	{
+		m_bMHJ_ExitStarted = true;
+		MHJ_BeginFallDamageIgnore();
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -100,16 +113,14 @@ modded class SCR_CharacterCommandHandlerComponent
 	{
 		m_bMHJ_CanopySession = false;
 
-		ChimeraCharacter character = ChimeraCharacter.Cast(m_OwnerEntity);
-		CompartmentAccessComponent access;
-		if (character)
-			access = character.GetCompartmentAccessComponent();
-		if (access && (access.IsInCompartment() || access.IsGettingIn() || access.IsGettingOut()))
+		if (MHJ_IsCompartmentBusy())
+		{
+			m_bMHJ_ExitStarted = true;
 			return;
+		}
 
-		if (GetCommandVehicle())
-			MHJ_EnsureFallCommand();
-
+		m_bMHJ_ExitStarted = false;
+		MHJ_EnsureFallCommand();
 		MHJ_Log.Warning("Craft handoff failed; remaining in native Fall");
 	}
 
@@ -121,6 +132,13 @@ modded class SCR_CharacterCommandHandlerComponent
 	{
 		if (!m_bMHJ_CanopySession)
 			return;
+
+		m_bMHJ_ExitStarted = true;
+		if (MHJ_IsCompartmentBusy())
+		{
+			MHJ_Log.Warning("OnCanopyExited while still seated; waiting for native GetOut");
+			return;
+		}
 
 		m_bMHJ_CanopySession = false;
 		MHJ_BeginFallDamageIgnore();
@@ -149,6 +167,37 @@ modded class SCR_CharacterCommandHandlerComponent
 		state = state + " move=" + MHJ_Log.Flag(GetCommandMove() != null);
 		state = state + " fall=" + MHJ_Log.Flag(GetCommandFall() != null);
 
+		ChimeraCharacter character = ChimeraCharacter.Cast(m_OwnerEntity);
+		CompartmentAccessComponent access;
+		if (character)
+			access = character.GetCompartmentAccessComponent();
+		if (access)
+		{
+			state = state + " inComp=" + MHJ_Log.Flag(access.IsInCompartment());
+			state = state + " gettingOut=" + MHJ_Log.Flag(access.IsGettingOut());
+		}
+		if (character)
+			state = state + " inVeh=" + MHJ_Log.Flag(character.IsInVehicle());
+		if (m_CharacterAnimComp)
+			state = state + " linked=" + MHJ_Log.Flag(m_CharacterAnimComp.PhysicsIsLinked());
+
+		PerceivableComponent perceivable;
+		if (m_OwnerEntity)
+			perceivable = PerceivableComponent.Cast(m_OwnerEntity.FindComponent(PerceivableComponent));
+		if (perceivable)
+		{
+			state = state + " percInComp=" + MHJ_Log.Flag(perceivable.IsInCompartment());
+			state = state + " disarmed=" + MHJ_Log.Flag(perceivable.IsDisarmed());
+			state = state + " vis=" + perceivable.GetVisualRecognitionFactor().ToString();
+		}
+
+		if (m_OwnerEntity)
+		{
+			Physics physics = m_OwnerEntity.GetPhysics();
+			if (physics)
+				state = state + " layer=" + physics.GetInteractionLayer().ToString();
+		}
+
 		InputManager inputManager = GetGame().GetInputManager();
 		if (inputManager)
 		{
@@ -168,6 +217,8 @@ modded class SCR_CharacterCommandHandlerComponent
 			state = state + " disView=" + MHJ_Log.Flag(controller.GetDisableViewControls());
 			state = state + " forceFL=" + MHJ_Log.Flag(controller.IsFreeLookForced());
 			state = state + " free=" + MHJ_Log.Flag(controller.IsFreeLookEnabled());
+			state = state + " life=" + controller.GetLifeState().ToString();
+			state = state + " uncon=" + MHJ_Log.Flag(controller.IsUnconscious());
 
 			CharacterInputContext inputContext = controller.GetInputContext();
 			if (inputContext)
@@ -242,10 +293,29 @@ modded class SCR_CharacterCommandHandlerComponent
 	//------------------------------------------------------------------------------------------------
 	override bool HandleFalling(CharacterInputContext pInputCtx, float pDt, int pCurrentCommandID)
 	{
-		if (m_bMHJ_CanopySession && !MHJ_CanopyFlight.OccupantIsInCanopy(m_OwnerEntity))
+		if (!m_bMHJ_ExitStarted && m_bMHJ_CanopySession && !MHJ_CanopyFlight.OccupantIsInCanopy(m_OwnerEntity) && !MHJ_IsCompartmentBusy())
 			MHJ_EnsureFallCommand();
 
 		return HandleFallingDefault(pInputCtx, pDt, pCurrentCommandID);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected bool MHJ_IsCompartmentBusy()
+	{
+		if (GetCommandVehicle())
+			return true;
+		if (m_CharacterAnimComp && m_CharacterAnimComp.PhysicsIsLinked())
+			return true;
+
+		ChimeraCharacter character = ChimeraCharacter.Cast(m_OwnerEntity);
+		CompartmentAccessComponent access;
+		if (character)
+			access = character.GetCompartmentAccessComponent();
+		if (!access)
+			return false;
+		if (access.IsInCompartment() || access.IsGettingIn() || access.IsGettingOut())
+			return true;
+		return false;
 	}
 
 	//------------------------------------------------------------------------------------------------

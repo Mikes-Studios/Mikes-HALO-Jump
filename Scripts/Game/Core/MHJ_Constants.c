@@ -64,6 +64,10 @@ class MHJ_Constants
 	static const float CANOPY_SINK_DECEL = 5;
 	static const float CANOPY_OPEN_SINK_DECEL = 18;
 	static const int CANOPY_DELETE_DELAY_MS = 200;
+	//! Working MK4 deletes 200 ms after GetOut. Wait extra if occupancy is still set
+	//! so PerceivableComponent.IsInCompartment() cannot stick after the craft dies.
+	static const int CANOPY_EXIT_POLL_MS = 50;
+	static const int CANOPY_EXIT_MAX_TRIES = 40;
 	static const float CANOPY_CL_TRIM = 0.55;
 	static const float CANOPY_CD_TRIM = 0.15;
 	static const float CANOPY_CL_DIVE_DROP = 0.50;

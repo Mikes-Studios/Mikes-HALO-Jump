@@ -60,6 +60,7 @@ class MHJ_CanopyFlight : ScriptComponent
 	protected bool m_bInputListening;
 	protected bool m_bCanopyVisual;
 	protected bool m_bCanopyHintShown;
+	protected int m_iExitWaitTries;
 	protected string m_sFlightMode;
 	protected vector m_vWorldVel;
 	protected vector m_vWind;
@@ -103,7 +104,6 @@ class MHJ_CanopyFlight : ScriptComponent
 		{
 			physics.EnableGravity(false);
 			physics.SetAngularVelocity(vector.Zero);
-			physics.SetInteractionLayer(0);
 		}
 		SetEventMask(owner, EntityEvent.FRAME | EntityEvent.SIMULATE | EntityEvent.POSTSIMULATE | EntityEvent.CONTACT);
 	}
@@ -180,6 +180,7 @@ class MHJ_CanopyFlight : ScriptComponent
 		m_bLanding = false;
 		m_bExitAsked = false;
 		m_bApplyLandingResult = false;
+		m_iExitWaitTries = 0;
 		m_bSnatchFired = false;
 		m_bInputListening = false;
 		m_sFlightMode = "EXIT";
@@ -296,8 +297,10 @@ class MHJ_CanopyFlight : ScriptComponent
 		m_bLanding = true;
 		m_bApplyLandingResult = false;
 		m_bServerSession = false;
+		m_iExitWaitTries = 0;
 		MHJ_Log.Warning("Canopy session aborted boarded=" + MHJ_Log.Flag(m_bBoarded) + " agl=" + GetAgl().ToString());
-		SleepPhysics();
+		FreezeCraftForExit();
+		NotifyJumperExitStarted();
 		if (IsOwnedHere())
 			RpcDo_MHJ_SessionAborted();
 		else
@@ -679,6 +682,7 @@ class MHJ_CanopyFlight : ScriptComponent
 		m_bLanding = true;
 		m_bServerSession = false;
 		m_bApplyLandingResult = true;
+		m_iExitWaitTries = 0;
 
 		m_fLandDown = -m_fVelY;
 		if (m_fLandDown < 0)
@@ -690,7 +694,8 @@ class MHJ_CanopyFlight : ScriptComponent
 
 		MHJ_Log.Land("agl=" + GetAgl().ToString() + " down=" + m_fLandDown.ToString() + " hs=" + m_fLandHorizontal.ToString() + " boarded=" + MHJ_Log.Flag(m_bBoarded));
 		StickCraftToTerrain();
-		SleepPhysics();
+		FreezeCraftForExit();
+		NotifyJumperExitStarted();
 		if (IsOwnedHere())
 			RpcDo_MHJ_Landing(m_fLandDown, m_fLandHorizontal, m_fLandHeading);
 		else
@@ -730,12 +735,80 @@ class MHJ_CanopyFlight : ScriptComponent
 	}
 
 	//------------------------------------------------------------------------------------------------
+	//! Working MK4 never sleeps the RigidBody until the occupant is out. Inactive
+	//! cargo physics can leave PhysicsIsLinked / PerceivableComponent.IsInCompartment.
+	protected void FreezeCraftForExit()
+	{
+		IEntity owner = m_Owner;
+		if (!owner)
+			owner = GetOwner();
+		if (!owner)
+			return;
+
+		Physics physics = owner.GetPhysics();
+		if (!physics)
+			return;
+
+		physics.EnableGravity(false);
+		physics.SetVelocity(vector.Zero);
+		physics.SetAngularVelocity(vector.Zero);
+		physics.SetActive(ActiveState.ACTIVE);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void NotifyJumperExitStarted()
+	{
+		if (!m_pJumper)
+			return;
+
+		SCR_CharacterCommandHandlerComponent handler = SCR_CharacterCommandHandlerComponent.Cast(m_pJumper.FindComponent(SCR_CharacterCommandHandlerComponent));
+		if (handler)
+			handler.MHJ_BeginCanopyExit();
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected bool JumperStillExiting()
+	{
+		if (!m_pJumper)
+			return false;
+		if (OccupantIsJumper())
+			return true;
+
+		CompartmentAccessComponent access = m_pJumper.GetCompartmentAccessComponent();
+		if (access)
+		{
+			if (access.IsInCompartment() || access.IsGettingIn() || access.IsGettingOut())
+				return true;
+		}
+
+		CharacterAnimationComponent anim = CharacterAnimationComponent.Cast(m_pJumper.FindComponent(CharacterAnimationComponent));
+		if (anim && anim.PhysicsIsLinked())
+			return true;
+
+		return false;
+	}
+
+	//------------------------------------------------------------------------------------------------
 	protected void MHJ_DeleteAfterExit()
 	{
 		if (!IsAuthority())
 			return;
 
 		AskOwnerToExitOnce();
+
+		if (JumperStillExiting())
+		{
+			m_iExitWaitTries = m_iExitWaitTries + 1;
+			if (m_iExitWaitTries < MHJ_Constants.CANOPY_EXIT_MAX_TRIES)
+			{
+				GetGame().GetCallqueue().CallLater(MHJ_DeleteAfterExit, MHJ_Constants.CANOPY_EXIT_POLL_MS, false);
+				return;
+			}
+
+			MHJ_Log.Warning("Deleting craft before GetOut finished");
+		}
+
+		SleepPhysics();
 
 		if (m_pJumper)
 		{
@@ -887,14 +960,6 @@ class MHJ_CanopyFlight : ScriptComponent
 		}
 
 		m_bCanopyVisual = showCanopy;
-
-		Physics physics = owner.GetPhysics();
-		if (!physics)
-			return;
-		if (showCanopy)
-			physics.SetInteractionLayer(MHJ_Constants.CRAFT_INTERACTION_LAYER);
-		else
-			physics.SetInteractionLayer(0);
 	}
 
 	//------------------------------------------------------------------------------------------------

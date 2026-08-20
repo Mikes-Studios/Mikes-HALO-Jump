@@ -578,6 +578,15 @@ modded class SCR_PlayerController
 		m_fMHJ_ExitHorizontal = horizontalSpeed;
 		m_fMHJ_ExitHeading = heading;
 		m_iMHJ_ExitTries = 0;
+
+		IEntity controlled = GetControlledEntity();
+		if (controlled)
+		{
+			SCR_CharacterCommandHandlerComponent handler = SCR_CharacterCommandHandlerComponent.Cast(controlled.FindComponent(SCR_CharacterCommandHandlerComponent));
+			if (handler)
+				handler.MHJ_BeginCanopyExit();
+		}
+
 		MHJ_WaitOwnerCanopyExit();
 	}
 
@@ -596,6 +605,10 @@ modded class SCR_PlayerController
 			if (access.IsInCompartment() || access.IsGettingIn() || access.IsGettingOut())
 				busy = true;
 		}
+
+		CharacterAnimationComponent anim = CharacterAnimationComponent.Cast(jumper.FindComponent(CharacterAnimationComponent));
+		if (anim && anim.PhysicsIsLinked())
+			busy = true;
 
 		if (busy)
 		{

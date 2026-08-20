@@ -88,6 +88,11 @@ GenericEntity : "{278E487E19D82680}Prefabs/Vehicles/Core/Vehicle_Cargo_Base.et" 
      GetInTeleport 1
      GetOutTeleport 1
      FakeDoor 1
+     AccessibilitySettings CompartmentAccessibilityContext "{C4E8A27B2A1B4F50}" {
+      BBHalfExtents 0.5 0.7 0.005
+      TraceOffset 0 1 0.65
+      ExcludePhysicsLayer 0x40000 0
+     }
     }
     CompartmentDoorInfo "{C4E8A27B2A1B4F42}" {
      ContextName "freefall"
@@ -104,6 +109,11 @@ GenericEntity : "{278E487E19D82680}Prefabs/Vehicles/Core/Vehicle_Cargo_Base.et" 
      GetInTeleport 1
      GetOutTeleport 1
      FakeDoor 1
+     AccessibilitySettings CompartmentAccessibilityContext "{C4E8A27B2A1B4F51}" {
+      BBHalfExtents 0.5 0.7 0.005
+      TraceOffset 0 1 0.65
+      ExcludePhysicsLayer 0x40000 0
+     }
     }
    }
    CompartmentSlots {
@@ -165,6 +175,13 @@ GenericEntity : "{278E487E19D82680}Prefabs/Vehicles/Core/Vehicle_Cargo_Base.et" 
    }
   }
   MHJ_CanopyFlight "{C4E8A27B2A1B4F10}" {
+  }
+  SCR_VehicleFactionAffiliationComponent "{C4E8A27B2A1B4F70}" {
+  }
+  SCR_VehiclePerceivableComponent "{C4E8A27B2A1B4F71}" {
+   IlluminationLvPerLight 4
+   UnitType VehicleUnarmored
+   HornSoundPowerDb 70
   }
  }
  Flags 0x403 0
