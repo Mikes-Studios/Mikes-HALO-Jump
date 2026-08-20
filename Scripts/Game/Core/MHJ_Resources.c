@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------------------------
 //! Resource GUIDs for the drop planner map session.
-//! MAP_HOST_LAYOUT is a Frame + MapWidgetClass. Workbench Play needs Resource Manager
-//! to have registered the .meta GUID (restart Workbench after pull).
+//! MAP_HOST_LAYOUT is MapFrame + MapWidget + UIIconsContainer. Workbench Play needs
+//! Resource Manager to have registered the .meta GUID (restart Workbench after pull).
 //! PLAIN_MAP_CONF is vanilla MapPlain.conf so Play still works if addon GUIDs are missing.
 //------------------------------------------------------------------------------------------------
 class MHJ_Resources

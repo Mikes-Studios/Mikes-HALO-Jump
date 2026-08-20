@@ -6,7 +6,7 @@
 //!
 //! Consumer: loaded with the addon. Do not instantiate.
 //!
-//! Extend: keep the canvas and zoom-bounds guards; call super only when safe.
+//! Extend: keep the canvas, planner-camera, and zoom-bounds guards; call super only when safe.
 //------------------------------------------------------------------------------------------------
 modded class SCR_MapEntity
 {
@@ -31,7 +31,10 @@ modded class SCR_MapEntity
 		super.OpenMap(config);
 
 		if (config.MapEntityMode != EMapEntityMode.PLAIN)
-			return;
+		{
+			if (config.MapEntityMode != EMapEntityMode.MHJ_PLANNER)
+				return;
+		}
 
 		PlayerController plc = GetGame().GetPlayerController();
 		if (!plc)

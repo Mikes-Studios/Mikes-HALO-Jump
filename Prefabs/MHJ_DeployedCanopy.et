@@ -6,15 +6,15 @@ GenericEntity : "{278E487E19D82680}Prefabs/Vehicles/Core/Vehicle_Cargo_Base.et" 
    Materials {
     MaterialAssignClass "{C4E8A27B2A1B4F30}" {
      SourceMaterial "Chute"
-     AssignedMaterial "{85583F983D5A2BA8}Assets/ParachuteMK3/Data/Chute.emat"
+     AssignedMaterial "{C4E8A27B2A1B4F60}Assets/ParachuteMK3/Data/Hidden.emat"
     }
     MaterialAssignClass "{C4E8A27B2A1B4F31}" {
      SourceMaterial "Line"
-     AssignedMaterial "{31106DE7805868A1}Assets/ParachuteMK3/Data/Line.emat"
+     AssignedMaterial "{C4E8A27B2A1B4F60}Assets/ParachuteMK3/Data/Hidden.emat"
     }
     MaterialAssignClass "{C4E8A27B2A1B4F32}" {
      SourceMaterial "01__Default"
-     AssignedMaterial "{17C975C41F8929BD}Assets/ParachuteMK3/Data/01__Default.emat"
+     AssignedMaterial "{C4E8A27B2A1B4F60}Assets/ParachuteMK3/Data/Hidden.emat"
     }
    }
   }
@@ -25,7 +25,6 @@ GenericEntity : "{278E487E19D82680}Prefabs/Vehicles/Core/Vehicle_Cargo_Base.et" 
    LinearDamping 0
    AngularDamping 1
    SimState Simulation
-   ModelGeometry 1
    ResponseIndex "Normal"
   }
   RplComponent "{63136787FD0BCE14}" {
@@ -39,6 +38,14 @@ GenericEntity : "{278E487E19D82680}Prefabs/Vehicles/Core/Vehicle_Cargo_Base.et" 
      ContextName "passenger_l02"
      Position PointInfo "{C4E8A27B2A1B4F21}" {
       Offset 0 0.674 0
+     }
+     Height 0
+    }
+    UserActionContext "{C4E8A27B2A1B4F40}" {
+     ContextName "freefall"
+     Position PointInfo "{C4E8A27B2A1B4F41}" {
+      Offset 0 0.674 0
+      Angles -90 0 0
      }
      Height 0
     }
@@ -82,6 +89,22 @@ GenericEntity : "{278E487E19D82680}Prefabs/Vehicles/Core/Vehicle_Cargo_Base.et" 
      GetOutTeleport 1
      FakeDoor 1
     }
+    CompartmentDoorInfo "{C4E8A27B2A1B4F42}" {
+     ContextName "freefall"
+     EntryPositionInfo PointInfo "{C4E8A27B2A1B4F43}" {
+      Offset 0 0.674 0
+      Angles -90 0 0
+     }
+     ExitPositionInfo PointInfo "{C4E8A27B2A1B4F44}" {
+      Offset 0 0 1.5
+     }
+     ExitTeleportPositionInfo PointInfo "{C4E8A27B2A1B4F45}" {
+      Offset 0 0 1.5
+     }
+     GetInTeleport 1
+     GetOutTeleport 1
+     FakeDoor 1
+    }
    }
    CompartmentSlots {
     CargoCompartmentSlot passenger_l02 {
@@ -99,7 +122,7 @@ GenericEntity : "{278E487E19D82680}Prefabs/Vehicles/Core/Vehicle_Cargo_Base.et" 
       VisibilityRange 5
      }
      PassengerPositionInfo EntitySlotInfo "{C4E8A27B2A1B4F18}" {
-      Offset 0 0.674 0
+      Offset 0 1.474 0
      }
      ForcedFreeLook 1
      SkipCharacterDoorAnimationsFromSeat 1
@@ -108,6 +131,34 @@ GenericEntity : "{278E487E19D82680}Prefabs/Vehicles/Core/Vehicle_Cargo_Base.et" 
      }
      BaseCoverage 0
      ContextName "passenger_l02"
+     m_fFreelookAimLimitOverrideLeft -160
+     m_fFreelookAimLimitOverrideRight 160
+    }
+    CargoCompartmentSlot freefall {
+     CompartmentAction SCR_GetInUserAction "{C4E8A27B2A1B4F46}" {
+      ParentContextList {
+       "freefall"
+      }
+      CanAggregate 1
+      "Sort Priority" 3
+     }
+     GetOutAction SCR_GetOutAction "{C4E8A27B2A1B4F47}" {
+      ParentContextList {
+       "freefall"
+      }
+      VisibilityRange 5
+     }
+     PassengerPositionInfo EntitySlotInfo "{C4E8A27B2A1B4F48}" {
+      Offset 0 1.474 0
+      Angles -120 0 0
+     }
+     ForcedFreeLook 1
+     SkipCharacterDoorAnimationsFromSeat 1
+     DoorInfoList {
+      1
+     }
+     BaseCoverage 0
+     ContextName "freefall"
      m_fFreelookAimLimitOverrideLeft -160
      m_fFreelookAimLimitOverrideRight 160
     }

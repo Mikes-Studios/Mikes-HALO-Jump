@@ -1,0 +1,12 @@
+MatPBRBasic "{C4E8A27B2A1B4F60}Assets/ParachuteMK3/Data/Hidden.emat" {
+ Color 0 0 0 1
+ ZWrite 0
+ CastShadow 0
+ ReceiveShadow 0
+ NoDecals 1
+ WetnessScale 0
+ PorosityScale 0
+ AlphaMul 0
+ BlendMode AlphaBlend
+ MetalnessScale 0
+}

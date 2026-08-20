@@ -1,10 +1,21 @@
 FrameWidgetClass {
- Name "MHJ_MapFrame"
+ Name "MapFrame"
  Color 0.07 0.16 0.19 1
  {
   MapWidgetClass "{C4E8A27B1F906DB3}" {
    Name "MapWidget"
    Slot FrameWidgetSlot "{C4E8A27B1F906DB4}" {
+    Anchor 0 0 1 1
+    OffsetLeft 0
+    OffsetTop 0
+    OffsetRight 0
+    OffsetBottom 0
+   }
+  }
+  FrameWidgetClass "{C4E8A27B1F906DB5}" {
+   Name "UIIconsContainer"
+   "Ignore Cursor" 1
+   Slot FrameWidgetSlot "{C4E8A27B1F906DB6}" {
     Anchor 0 0 1 1
     OffsetLeft 0
     OffsetTop 0

@@ -11,7 +11,7 @@ Walk up to a sign, pick a drop on the map, and jump. Freefall, then a steerable 
 | Prefix | `MHJ_` |
 | License | [APL-SA](https://www.bohemia.net/community/licenses/arma-public-license-share-alike) |
 
-Reforger has no parachute. This addon uses a scripted character command (same pattern as the engine `SCR_CharacterCommandFly` example): gravity off, scripted descent, WASD steering. The canopy mesh is parented to the jumper when it opens. Freefall still uses the standing character — there is no custom HALO animation graph.
+Reforger has no parachute. This addon spawns one cargo craft at jump. You GetIn a belly-pitched seat for freefall (vanilla sit pose, slot `Angles -90`), then at open altitude the chute mesh appears and you switch to the sit slot on the same vehicle. There is no custom HALO animation graph and no GetOut until landing.
 
 ## Place the sign
 
@@ -22,7 +22,7 @@ Restart Workbench (or Resource Manager → Refresh) after pulling this addon so 
 | World Editor | `Prefabs/MHJ_HaloJumpSign.et` |
 | Game Master | `PrefabsEditable/Auto/MHJ/E_MHJ_HaloJumpSign.et` |
 
-It inherits the vanilla US vehicle-repair sign (mesh + collision). Look at it and use **HALO Jump**. The planner shows the live world map (native `MapWidget` / `SCR_MapEntity` PLAIN). Click a drop, set jump altitude (AGL) and canopy-open altitude (AGL), then **Jump**.
+It inherits the vanilla US vehicle-repair sign (mesh + collision). Look at it and use **HALO Jump**. The planner shows the live world map (native `MapWidget` / `SCR_MapEntity` planner session) plus the pins and tasks from the paper map. Click a drop, set jump altitude (AGL) and canopy-open altitude (AGL), then **Jump**. Click still sets the drop; you cannot place pins from this screen.
 
 Does **not** depend on Mike's Map HUD. If Map HUD is also loaded, it yields while the planner is open and resumes after close.
 
@@ -40,12 +40,12 @@ Dependencies {
 
 | Phase | What happens |
 |---|---|
-| Exit | Short unstable tumble, then you can fly the body. |
-| Freefall | Gravity and drag. **W** tracks toward heading. **S** slows the fall. **A/D** turns. Wind drifts you. |
-| Canopy | Opens on its own at your open altitude, with a snatch. **W** dives (steep path, TAS builds). **S** flares and rotates that speed into a horizontal swoop. Land into the wind. **W** held near the ground skips auto-flare. |
-| Land | Command ends near the ground. A clean flare is safe; leftover ground speed steps into a short run. A heavy arrival hurts the legs; a crater can kill. |
+| Exit | Teleport, native Fall, then GetIn the belly seat. A short unstable tumble, then you can fly. |
+| Freefall | Quadratic drag on the craft. **W** tracks toward heading. **S** slows the fall. **A/D** turns. Wind drifts you. |
+| Canopy | Opens on its own at your open altitude, with a snatch, and switches you to the sit seat. **W** dives (steep path, TAS builds). **S** flares and rotates that speed into a horizontal swoop. Land into the wind. **W** held near the ground skips auto-flare. |
+| Land | Native GetOut near the ground. A clean flare is safe; leftover ground speed steps into a short run. A heavy arrival hurts the legs; a crater can kill. |
 
-The ram-air canopy (`Prefabs/MHJ_DeployedCanopy.et`) appears at open altitude and is deleted on landing.
+The ram-air craft (`Prefabs/MHJ_DeployedCanopy.et`) is spawned at jump (mesh hidden until open) and deleted on landing.
 
 ## Licence
 
@@ -53,4 +53,4 @@ The ram-air canopy (`Prefabs/MHJ_DeployedCanopy.et`) appears at open altitude an
 
 Full text: `license.txt`.
 
-The Parachute MK3 mesh, textures, and materials are adapted from [Alphaegen's Parachute Framework](https://github.com/Alphaegen/ArmaReforgerParachutes) (Workshop `65930CB4CD0237B2`). See `Assets/ParachuteMK3/ATTRIBUTION.txt`. That project has no character animation graphs (vanilla sit-in-seat). This addon does **not** depend on that Workshop item. Freefall stays on native Fall; canopy boarding uses native GetIn on our own cargo prefab.
+The Parachute MK3 mesh, textures, and materials are adapted from [Alphaegen's Parachute Framework](https://github.com/Alphaegen/ArmaReforgerParachutes) (Workshop `65930CB4CD0237B2`). See `Assets/ParachuteMK3/ATTRIBUTION.txt`. That project has no character animation graphs (vanilla sit-in-seat). This addon does **not** depend on that Workshop item. Freefall uses native Fall only to board; canopy boarding and the sit switch use native GetIn on our own cargo prefab.

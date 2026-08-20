@@ -1,10 +1,11 @@
 //------------------------------------------------------------------------------------------------
-//! Native MapWidget + SCR_MapEntity PLAIN session for the HALO drop planner.
+//! Native MapWidget + SCR_MapEntity planner session for the HALO drop picker.
 //! MapWidget is spawned from UI/Layouts/MHJ_MapHost.layout (vanilla MapWidgetClass),
-//! as a sibling frame on the menu root. OpenMap waits until the card intro has
-//! settled, then waits until the slot has not moved for a beat, then OpenMap
-//! once. The frame is not rebuilt if the slot jitters after that. Clicks stay
-//! in map-widget space.
+//! as a sibling frame on the menu root. The frame is named MapFrame and hosts
+//! UIIconsContainer so paper-map pins and tasks can parent onto it. OpenMap waits
+//! until the card intro has settled, then waits until the slot has not moved for
+//! a beat, then OpenMap once. Clicks stay in map-widget space; overlay widgets
+//! are IGNORE_CURSOR.
 //!
 //! Consumer: owned by MHJ_HaloJumpMenu only.
 //------------------------------------------------------------------------------------------------
@@ -18,7 +19,7 @@ class MHJ_MapHost
 	protected static const int STABLE_MS = 50;
 	protected static const float SLOT_MOVE_PX = 8;
 	protected static const string MAP_CONTEXT = "MapContext";
-	protected static const string MAP_FRAME_NAME = "MHJ_MapFrame";
+	protected static const string ICONS_CONTAINER_NAME = "UIIconsContainer";
 
 	protected Widget m_wMenuRoot;
 	protected Widget m_wMapFrame;
@@ -344,7 +345,7 @@ class MHJ_MapHost
 		if (mapEnt.IsOpen())
 		{
 			MapConfiguration openCfg = mapEnt.GetMapConfig();
-			if (!openCfg || openCfg.MapEntityMode != EMapEntityMode.PLAIN)
+			if (!IsPlannerConfig(openCfg))
 			{
 				MHJ_Log.Warning("Another map is open; drop picker uses grid fallback");
 				AbortOpen();
@@ -354,18 +355,18 @@ class MHJ_MapHost
 			mapEnt.CloseMap();
 		}
 
-		MapConfiguration cfg = mapEnt.SetupMapConfig(EMapEntityMode.PLAIN, MHJ_Resources.OWN_PLAIN_MAP_CONF, m_wMenuRoot);
+		MapConfiguration cfg = mapEnt.SetupMapConfig(EMapEntityMode.MHJ_PLANNER, MHJ_Resources.OWN_PLAIN_MAP_CONF, m_wMenuRoot);
 		if (!cfg)
 			cfg = mapEnt.SetupMapConfig(EMapEntityMode.PLAIN, MHJ_Resources.PLAIN_MAP_CONF, m_wMenuRoot);
 		if (!cfg)
 		{
-			MHJ_Log.Error("SetupMapConfig failed for HALO PLAIN map");
+			MHJ_Log.Error("SetupMapConfig failed for HALO planner map");
 			AbortOpen();
 			return;
 		}
 
 		mapEnt.SetMapWidget(canvas);
-		MHJ_Log.Info("OpenMap PLAIN");
+		MHJ_Log.Info("OpenMap planner");
 		mapEnt.OpenMap(cfg);
 		mapEnt.SetMapWidget(canvas);
 		if (!mapEnt.IsOpen())
@@ -554,7 +555,7 @@ class MHJ_MapHost
 			return false;
 		}
 
-		m_wMapFrame.SetName(MAP_FRAME_NAME);
+		m_wMapFrame.SetName(SCR_MapConstants.MAP_FRAME_NAME);
 		m_wMapFrame.SetZOrder(MAP_FRAME_Z);
 		m_wMapFrame.SetFlags(WidgetFlags.VISIBLE | WidgetFlags.IGNORE_CURSOR);
 		m_wMapFrame.SetColor(Color.FromSRGBA(18, 42, 48, 255));
@@ -574,6 +575,11 @@ class MHJ_MapHost
 		}
 
 		m_wMapWidget.SetFlags(WidgetFlags.VISIBLE | WidgetFlags.IGNORE_CURSOR);
+
+		Widget icons = m_wMapFrame.FindAnyWidget(ICONS_CONTAINER_NAME);
+		if (icons)
+			icons.SetFlags(WidgetFlags.VISIBLE | WidgetFlags.IGNORE_CURSOR);
+
 		return true;
 	}
 
@@ -650,6 +656,18 @@ class MHJ_MapHost
 	}
 
 	//------------------------------------------------------------------------------------------------
+	protected bool IsPlannerConfig(MapConfiguration config)
+	{
+		if (!config)
+			return false;
+		if (config.MapEntityMode == EMapEntityMode.MHJ_PLANNER)
+			return true;
+		if (config.MapEntityMode == EMapEntityMode.PLAIN)
+			return true;
+		return false;
+	}
+
+	//------------------------------------------------------------------------------------------------
 	protected CanvasWidget FindRootMapCanvas()
 	{
 		if (!m_wMenuRoot)
@@ -717,7 +735,7 @@ class MHJ_MapHost
 		if (!config)
 			return;
 
-		if (config.MapEntityMode != EMapEntityMode.PLAIN)
+		if (!IsPlannerConfig(config))
 		{
 			if (m_bOwnsMap || m_bWantOpen)
 			{
@@ -734,7 +752,7 @@ class MHJ_MapHost
 
 		if (!ResolveMapCanvas())
 		{
-			MHJ_Log.Error("PLAIN map opened without a canvas");
+			MHJ_Log.Error("Planner map opened without a canvas");
 			m_bWantOpen = false;
 			m_bOwnsMap = false;
 			m_bLive = false;
@@ -753,10 +771,17 @@ class MHJ_MapHost
 	{
 		if (!config)
 			return;
-		if (config.MapEntityMode != EMapEntityMode.PLAIN)
+		if (!IsPlannerConfig(config))
 			return;
 		if (!m_bOwnsMap)
 			return;
+
+		if (m_wMenuRoot)
+		{
+			Widget icons = m_wMenuRoot.FindAnyWidget(ICONS_CONTAINER_NAME);
+			if (!icons)
+				MHJ_Log.Warning("Planner UIIconsContainer missing; paper-map tasks will not show");
+		}
 
 		ApplyFitAndPips(SCR_MapEntity.GetMapInstance());
 	}

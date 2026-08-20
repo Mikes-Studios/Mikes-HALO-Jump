@@ -1,19 +1,18 @@
 //------------------------------------------------------------------------------------------------
-//! Coordinates HALO deployment and the owner-owned canopy setup. Freefall input
-//! uses this client-owned node; canopy input goes directly through the owned canopy.
+//! Coordinates HALO deployment and the owner-owned jump craft. Spawn at jump,
+//! GetIn the belly slot from native Fall, switch to the sit slot at open.
 //------------------------------------------------------------------------------------------------
 modded class SCR_PlayerController
 {
 	protected RplId m_MHJ_CanopyId = RplId.Invalid();
 	protected IEntity m_MHJ_ServerCanopy;
 	protected int m_iMHJ_SetupTries;
+	protected int m_iMHJ_SitTries;
 	protected int m_iMHJ_ExitTries;
 	protected float m_fMHJ_ExitDown;
 	protected float m_fMHJ_ExitHorizontal;
 	protected float m_fMHJ_ExitHeading;
-	protected vector m_vMHJ_PendingJumpPosition;
 	protected float m_fMHJ_PendingOpenAltitude;
-	protected int m_iMHJ_BeginTries;
 
 	//------------------------------------------------------------------------------------------------
 	override void OnControlledEntityChanged(IEntity from, IEntity to)
@@ -50,26 +49,6 @@ modded class SCR_PlayerController
 		}
 
 		Rpc(RpcAsk_MHJ_HaloJump, dropXZ, jumpAltitude, openAltitude);
-		MHJ_LocalStartHalo(dropXZ, jumpAltitude, openAltitude);
-	}
-
-	//------------------------------------------------------------------------------------------------
-	void MHJ_AskFreefallSteer(float turn, float pitch)
-	{
-		Rpc(RpcAsk_MHJ_FreefallSteer, turn, pitch);
-	}
-
-	//------------------------------------------------------------------------------------------------
-	[RplRpc(RplChannel.Unreliable, RplRcver.Server)]
-	protected void RpcAsk_MHJ_FreefallSteer(float turn, float pitch)
-	{
-		IEntity controlled = GetControlledEntity();
-		if (!controlled)
-			return;
-
-		SCR_CharacterCommandHandlerComponent handler = SCR_CharacterCommandHandlerComponent.Cast(controlled.FindComponent(SCR_CharacterCommandHandlerComponent));
-		if (handler)
-			handler.MHJ_ApplyFreefallSteer(turn, pitch);
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -116,74 +95,24 @@ modded class SCR_PlayerController
 		if (handler)
 			handler.MHJ_StartHaloJump(openAltitude);
 
-		Rpc(RpcDo_MHJ_BeginHalo, jumpPosition, openAltitude);
+		vector worldVelocity = vector.Zero;
+		worldVelocity[1] = -MHJ_Constants.FREEFALL_START_SINK;
+		vector ypr = character.GetYawPitchRoll();
+		float heading = ypr[0] * Math.DEG2RAD;
+		if (!MHJ_StartCanopySession(character, jumpPosition, worldVelocity, vector.Zero, heading, 0, 0, 0, openAltitude))
+		{
+			MHJ_Log.Error("HALO jump craft spawn failed");
+			return;
+		}
+
 		MHJ_Log.Info("HALO start player " + playerId.ToString() + " at " + jumpPosition.ToString());
 	}
 
 	//------------------------------------------------------------------------------------------------
-	[RplRpc(RplChannel.Reliable, RplRcver.Owner)]
-	protected void RpcDo_MHJ_BeginHalo(vector jumpPosition, float openAltitude)
-	{
-		if (Replication.IsServer())
-			return;
-
-		m_vMHJ_PendingJumpPosition = jumpPosition;
-		m_fMHJ_PendingOpenAltitude = openAltitude;
-		m_iMHJ_BeginTries = 0;
-		MHJ_TryBeginHalo();
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected void MHJ_LocalStartHalo(vector dropXZ, float jumpAltitude, float openAltitude)
-	{
-		BaseWorld world = GetGame().GetWorld();
-		float terrainY = 0;
-		if (world)
-			terrainY = world.GetSurfaceY(dropXZ[0], dropXZ[2]);
-
-		m_vMHJ_PendingJumpPosition[0] = dropXZ[0];
-		m_vMHJ_PendingJumpPosition[1] = terrainY + jumpAltitude;
-		m_vMHJ_PendingJumpPosition[2] = dropXZ[2];
-		m_fMHJ_PendingOpenAltitude = openAltitude;
-		m_iMHJ_BeginTries = 0;
-		MHJ_TryBeginHalo();
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected void MHJ_TryBeginHalo()
-	{
-		SCR_Global.TeleportPlayer(GetPlayerId(), m_vMHJ_PendingJumpPosition, SCR_EPlayerTeleportedReason.DEFAULT);
-
-		IEntity controlled = GetControlledEntity();
-		if (!controlled)
-		{
-			MHJ_RetryBeginHalo();
-			return;
-		}
-
-		SCR_CharacterCommandHandlerComponent handler = SCR_CharacterCommandHandlerComponent.Cast(controlled.FindComponent(SCR_CharacterCommandHandlerComponent));
-		if (!handler)
-		{
-			MHJ_RetryBeginHalo();
-			return;
-		}
-
-		handler.MHJ_StartHaloJump(m_fMHJ_PendingOpenAltitude);
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected void MHJ_RetryBeginHalo()
-	{
-		m_iMHJ_BeginTries = m_iMHJ_BeginTries + 1;
-		if (m_iMHJ_BeginTries >= 40)
-			return;
-
-		GetGame().GetCallqueue().CallLater(MHJ_TryBeginHalo, 50, false);
-	}
-
-	//------------------------------------------------------------------------------------------------
 	//! Server-only session creation. Ownership is assigned before flight setup.
-	bool MHJ_StartCanopySession(notnull ChimeraCharacter jumper, vector worldVelocity, vector wind, float heading, float pitch, float bank, float simTime, float openAltitude)
+	//! Spawn at jumpPosition, not jumper.GetOrigin() — TeleportPlayer can leave
+	//! origin stale for a frame, and GetIn then seats the pawn at the sign.
+	bool MHJ_StartCanopySession(notnull ChimeraCharacter jumper, vector jumpPosition, vector worldVelocity, vector wind, float heading, float pitch, float bank, float simTime, float openAltitude)
 	{
 		if (!Replication.IsServer())
 			return false;
@@ -203,7 +132,7 @@ modded class SCR_PlayerController
 		ypr[1] = 0;
 		ypr[2] = 0;
 		Math3D.AnglesToMatrix(ypr, spawnParams.Transform);
-		spawnParams.Transform[3] = jumper.GetOrigin();
+		spawnParams.Transform[3] = jumpPosition;
 
 		IEntity canopy = GetGame().SpawnEntityPrefab(resource, GetGame().GetWorld(), spawnParams);
 		if (!canopy)
@@ -245,10 +174,7 @@ modded class SCR_PlayerController
 
 		SCR_CharacterCommandHandlerComponent handler = SCR_CharacterCommandHandlerComponent.Cast(jumper.FindComponent(SCR_CharacterCommandHandlerComponent));
 		if (handler)
-		{
 			handler.MHJ_BeginCanopySession(openAltitude);
-			handler.MHJ_OnFreefallBoarded();
-		}
 
 		IEntity localCharacter = SCR_PlayerController.GetLocalControlledEntity();
 		if (localCharacter == jumper)
@@ -256,7 +182,7 @@ modded class SCR_PlayerController
 		else
 			Rpc(RpcDo_MHJ_CanopySetup, canopyId, openAltitude);
 
-		MHJ_Log.Info("Canopy spawned, owned, and queued for owner setup");
+		MHJ_Log.Info("Jump craft spawned, owned, and queued for owner setup");
 		return true;
 	}
 
@@ -312,7 +238,9 @@ modded class SCR_PlayerController
 			return;
 		}
 
-		BaseCompartmentSlot slot = flight.GetCanopySlot();
+		BaseCompartmentSlot slot = flight.GetFreefallSlot();
+		if (!slot)
+			slot = flight.GetCanopySlot();
 		if (!slot)
 		{
 			MHJ_RetryOwnerCanopySetup();
@@ -389,7 +317,9 @@ modded class SCR_PlayerController
 			return;
 		}
 
-		BaseCompartmentSlot slot = flight.GetCanopySlot();
+		BaseCompartmentSlot slot = flight.GetFreefallSlot();
+		if (!slot)
+			slot = flight.GetCanopySlot();
 		CompartmentAccessComponent access = jumper.GetCompartmentAccessComponent();
 		if (!slot || !access)
 		{
@@ -414,14 +344,14 @@ modded class SCR_PlayerController
 			return;
 		}
 
-		if (!access.GetInVehicle(canopy, slot, true, 0, ECloseDoorAfterActions.INVALID, true))
+		if (!access.GetInVehicle(canopy, slot, true, MHJ_Constants.GETIN_DOOR_ANY, ECloseDoorAfterActions.INVALID, true))
 		{
-			MHJ_Log.Warning("Canopy GetIn refused; retrying");
+			MHJ_Log.Warning("Freefall GetIn refused; retrying");
 			MHJ_RetryOwnerCanopyGetIn();
 			return;
 		}
 
-		MHJ_Log.Info("Canopy GetIn accepted");
+		MHJ_Log.Info("Freefall GetIn accepted");
 		GetGame().GetCallqueue().CallLater(MHJ_MonitorOwnerBoard, 50, false);
 	}
 
@@ -451,7 +381,69 @@ modded class SCR_PlayerController
 				handler.MHJ_OnFreefallBoarded();
 		}
 
-		MHJ_Log.Info("Canopy native GetIn completed");
+		MHJ_Log.Info("Freefall native GetIn completed");
+	}
+
+	//------------------------------------------------------------------------------------------------
+	void MHJ_OwnerSwitchToSitSlot()
+	{
+		m_iMHJ_SitTries = 0;
+		MHJ_TryOwnerSitSwitch();
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void MHJ_TryOwnerSitSwitch()
+	{
+		if (!m_MHJ_CanopyId.IsValid())
+			return;
+
+		ChimeraCharacter jumper = ChimeraCharacter.Cast(GetControlledEntity());
+		IEntity canopy = MHJ_ResolveCanopy(m_MHJ_CanopyId);
+		MHJ_CanopyFlight flight;
+		if (canopy)
+			flight = MHJ_CanopyFlight.Cast(canopy.FindComponent(MHJ_CanopyFlight));
+		if (!jumper || !canopy || !flight)
+		{
+			MHJ_RetryOwnerSitSwitch();
+			return;
+		}
+
+		BaseCompartmentSlot sitSlot = flight.GetCanopySlot();
+		CompartmentAccessComponent access = jumper.GetCompartmentAccessComponent();
+		if (!sitSlot || !access)
+			return;
+
+		if (sitSlot.GetOccupant() == jumper)
+			return;
+		if (access.IsGettingIn())
+		{
+			GetGame().GetCallqueue().CallLater(MHJ_TryOwnerSitSwitch, 50, false);
+			return;
+		}
+		if (access.IsGettingOut())
+		{
+			MHJ_RetryOwnerSitSwitch();
+			return;
+		}
+
+		if (!access.GetInVehicle(canopy, sitSlot, true, MHJ_Constants.GETIN_DOOR_ANY, ECloseDoorAfterActions.INVALID, true))
+		{
+			MHJ_Log.Warning("Canopy sit switch refused; retrying");
+			MHJ_RetryOwnerSitSwitch();
+			return;
+		}
+
+		MHJ_Log.Info("Canopy sit switch accepted");
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void MHJ_RetryOwnerSitSwitch()
+	{
+		m_iMHJ_SitTries = m_iMHJ_SitTries + 1;
+		if (m_iMHJ_SitTries >= 40)
+			return;
+
+		GetGame().GetCallqueue().CallLater(MHJ_TryOwnerSitSwitch, 50, false);
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -680,6 +672,7 @@ modded class SCR_PlayerController
 		GetGame().GetCallqueue().Remove(MHJ_TryOwnerCanopySetup);
 		GetGame().GetCallqueue().Remove(MHJ_TryOwnerGetIn);
 		GetGame().GetCallqueue().Remove(MHJ_MonitorOwnerBoard);
+		GetGame().GetCallqueue().Remove(MHJ_TryOwnerSitSwitch);
 	}
 
 	//------------------------------------------------------------------------------------------------

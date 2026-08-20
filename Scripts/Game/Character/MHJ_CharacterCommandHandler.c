@@ -1,11 +1,10 @@
 //------------------------------------------------------------------------------------------------
-//! Starts native Fall after a HALO teleport and ticks MHJ freefall aero beside it.
-//! Native compartment code owns canopy entry, vehicle commands, exit, and
+//! Starts native Fall after a HALO teleport so GetInVehicle can board the jump
+//! craft. Native compartment code owns entry, vehicle commands, exit, and
 //! restoration to infantry controls. This handler never SetCurrentCommand.
 //------------------------------------------------------------------------------------------------
 modded class SCR_CharacterCommandHandlerComponent
 {
-	protected ref MHJ_HaloCommand m_MHJ_HaloCommand;
 	protected bool m_bMHJ_CanopySession;
 	protected float m_fMHJ_CanopyOpenAltitude;
 	protected float m_fMHJ_LandCarryRemain;
@@ -17,35 +16,14 @@ modded class SCR_CharacterCommandHandlerComponent
 	//------------------------------------------------------------------------------------------------
 	void MHJ_StartHaloJump(float openAltitude)
 	{
-		if (MHJ_IsHaloJumping())
-			return;
 		if (!m_CharacterAnimComp)
 			return;
 		if (!m_OwnerEntity)
 			return;
 
-		ChimeraCharacter character = ChimeraCharacter.Cast(m_OwnerEntity);
-		if (!character)
-			return;
-
-		CharacterControllerComponent controller = GetControllerComponent();
-		if (!controller)
-			controller = m_CharacterControllerComp;
-		if (!controller)
-			return;
-
-		if (!GetCommandFall())
-		{
-			float verticalVelocity = 0;
-			Physics physics = m_OwnerEntity.GetPhysics();
-			if (physics)
-				verticalVelocity = physics.GetVelocity()[1];
-			StartCommand_Fall(verticalVelocity);
-		}
-
-		m_MHJ_HaloCommand = new MHJ_HaloCommand(character, controller, m_CharacterAnimComp, openAltitude, true);
-		m_MHJ_HaloCommand.Start();
-		MHJ_Log.Info("HALO jump started openAlt=" + openAltitude.ToString());
+		m_fMHJ_CanopyOpenAltitude = openAltitude;
+		MHJ_EnsureFallCommand();
+		MHJ_Log.Info("HALO native Fall started openAlt=" + openAltitude.ToString());
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -53,7 +31,9 @@ modded class SCR_CharacterCommandHandlerComponent
 	{
 		if (m_bMHJ_CanopySession)
 			return true;
-		return MHJ_IsFreefallActive();
+		if (MHJ_CanopyFlight.OccupantIsInCanopy(m_OwnerEntity))
+			return true;
+		return false;
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -64,19 +44,6 @@ modded class SCR_CharacterCommandHandlerComponent
 		MHJ_EndFallDamageIgnore();
 		m_bMHJ_ProtectHaloFall = false;
 		m_bMHJ_CanopySession = false;
-		if (!m_MHJ_HaloCommand)
-			return;
-
-		m_MHJ_HaloCommand.Abort();
-		m_MHJ_HaloCommand = null;
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected bool MHJ_IsFreefallActive()
-	{
-		if (!m_MHJ_HaloCommand)
-			return false;
-		return m_MHJ_HaloCommand.IsActive();
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -87,25 +54,28 @@ modded class SCR_CharacterCommandHandlerComponent
 	}
 
 	//------------------------------------------------------------------------------------------------
-	//! Stop HALO aero. GetInVehicle runs from native Fall. Do not leave a
-	//! paused helper that can ResumeAero after a successful GetIn or land.
+	//! GetInVehicle runs from native Fall. Do not Land the fall command first.
 	void MHJ_PrepareCanopyBoard()
 	{
 		m_bMHJ_CanopySession = true;
-		MHJ_OnFreefallBoarded();
+		MHJ_EnsureFallCommand();
+	}
 
-		MHJ_ConsumeHaloFallCommand();
+	//------------------------------------------------------------------------------------------------
+	protected void MHJ_EnsureFallCommand()
+	{
+		if (GetCommandFall())
+			return;
+		if (GetCommandVehicle())
+			return;
 
-		if (!GetCommandFall() && !GetCommandVehicle())
-		{
-			float verticalVelocity = 0;
-			Physics physics;
-			if (m_OwnerEntity)
-				physics = m_OwnerEntity.GetPhysics();
-			if (physics)
-				verticalVelocity = physics.GetVelocity()[1];
-			StartCommand_Fall(verticalVelocity);
-		}
+		float verticalVelocity = -MHJ_Constants.FREEFALL_START_SINK;
+		Physics physics;
+		if (m_OwnerEntity)
+			physics = m_OwnerEntity.GetPhysics();
+		if (physics)
+			verticalVelocity = physics.GetVelocity()[1];
+		StartCommand_Fall(verticalVelocity);
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -122,25 +92,13 @@ modded class SCR_CharacterCommandHandlerComponent
 	//------------------------------------------------------------------------------------------------
 	void MHJ_OnFreefallBoarded()
 	{
-		if (!m_MHJ_HaloCommand)
-			return;
-
-		m_MHJ_HaloCommand.Stop();
-		m_MHJ_HaloCommand = null;
 	}
 
 	//------------------------------------------------------------------------------------------------
-	//! Deployment failed before GetIn. Resume HALO aero only if the helper is
-	//! still alive (spawn/session start failed). After Stop, stay on native Fall.
+	//! Deployment failed before GetIn. Stay on native Fall.
 	void MHJ_CanopyBoardFailed()
 	{
 		m_bMHJ_CanopySession = false;
-
-		if (m_MHJ_HaloCommand && m_MHJ_HaloCommand.IsActive())
-		{
-			m_MHJ_HaloCommand.ResumeAero();
-			return;
-		}
 
 		ChimeraCharacter character = ChimeraCharacter.Cast(m_OwnerEntity);
 		CompartmentAccessComponent access;
@@ -150,17 +108,9 @@ modded class SCR_CharacterCommandHandlerComponent
 			return;
 
 		if (GetCommandVehicle())
-		{
-			float verticalVelocity = 0;
-			Physics physics;
-			if (m_OwnerEntity)
-				physics = m_OwnerEntity.GetPhysics();
-			if (physics)
-				verticalVelocity = physics.GetVelocity()[1];
-			StartCommand_Fall(verticalVelocity);
-		}
+			MHJ_EnsureFallCommand();
 
-		MHJ_Log.Warning("Canopy handoff failed; remaining in native freefall");
+		MHJ_Log.Warning("Craft handoff failed; remaining in native Fall");
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -188,31 +138,13 @@ modded class SCR_CharacterCommandHandlerComponent
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected void MHJ_OnFreefallGrounded()
-	{
-		if (!m_MHJ_HaloCommand)
-			return;
-
-		float landDown = m_MHJ_HaloCommand.GetLandDownSpeed();
-		float landHoriz = m_MHJ_HaloCommand.GetLandHorizSpeed();
-		float landHeading = m_MHJ_HaloCommand.GetLandHeading();
-		m_MHJ_HaloCommand = null;
-
-		MHJ_BeginFallDamageIgnore();
-		MHJ_ClearPawnFallVelocity();
-		MHJ_ConsumeHaloFallCommand();
-		MHJ_ApplyLandingImpact(landDown);
-		MHJ_BeginLandingCarry(landDown, landHoriz, landHeading);
-	}
-
-	//------------------------------------------------------------------------------------------------
 	protected void MHJ_LogInfantryInputState()
 	{
 		if (SCR_PlayerController.GetLocalControlledEntity() != m_OwnerEntity)
 			return;
 
 		string state = "input-recovery";
-		state = state + " freefall=" + MHJ_Log.Flag(MHJ_IsFreefallActive());
+		state = state + " craft=" + MHJ_Log.Flag(MHJ_CanopyFlight.OccupantIsInCanopy(m_OwnerEntity));
 		state = state + " veh=" + MHJ_Log.Flag(GetCommandVehicle() != null);
 		state = state + " move=" + MHJ_Log.Flag(GetCommandMove() != null);
 		state = state + " fall=" + MHJ_Log.Flag(GetCommandFall() != null);
@@ -308,40 +240,10 @@ modded class SCR_CharacterCommandHandlerComponent
 	}
 
 	//------------------------------------------------------------------------------------------------
-	void MHJ_ApplyFreefallSteer(float turn, float pitch)
-	{
-		if (!m_MHJ_HaloCommand)
-			return;
-		if (!m_MHJ_HaloCommand.IsAeroActive())
-			return;
-
-		m_MHJ_HaloCommand.SetSteerInput(turn, pitch);
-	}
-
-	//------------------------------------------------------------------------------------------------
 	override bool HandleFalling(CharacterInputContext pInputCtx, float pDt, int pCurrentCommandID)
 	{
-		if (m_MHJ_HaloCommand && m_MHJ_HaloCommand.IsAeroActive())
-		{
-			if (!GetCommandFall())
-				StartCommand_Fall(m_MHJ_HaloCommand.GetVerticalVelocity());
-
-			m_MHJ_HaloCommand.Tick(pDt);
-			if (m_MHJ_HaloCommand.ConsumeGrounded())
-				MHJ_OnFreefallGrounded();
-
-			// HandleFallingDefault Lands when PhysicsLanded. Gravity-off plus
-			// zeroed velocity made that true at jump altitude and dropped the
-			// pawn back to Move, which ignores SetVelocity.
-			return true;
-		}
-
-		if (m_MHJ_HaloCommand && m_MHJ_HaloCommand.IsActive())
-		{
-			m_MHJ_HaloCommand.Tick(pDt);
-			if (m_MHJ_HaloCommand.ConsumeGrounded())
-				MHJ_OnFreefallGrounded();
-		}
+		if (m_bMHJ_CanopySession && !MHJ_CanopyFlight.OccupantIsInCanopy(m_OwnerEntity))
+			MHJ_EnsureFallCommand();
 
 		return HandleFallingDefault(pInputCtx, pDt, pCurrentCommandID);
 	}

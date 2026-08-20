@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------------------------
 //! HALO drop planner. Hosted on the workspace so Workbench Play does not need
 //! chimeraMenus.conf (MenuManager never loads addon presets there).
-//! Native MapWidget is owned by MHJ_MapHost (PLAIN session) and framed over the picker slot.
+//! Native MapWidget is owned by MHJ_MapHost (planner session) and framed over the picker slot.
 //------------------------------------------------------------------------------------------------
 class MHJ_HaloJumpMenu
 {

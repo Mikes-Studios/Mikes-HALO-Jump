@@ -14,6 +14,8 @@ class MHJ_Constants
 
 	static const float OPEN_MARGIN = 50;
 	static const float LAND_AGL = 1.6;
+	//! Server may accept an owner-grounded RPC while still this high (dead-reckon overshoot).
+	static const float CANOPY_OWNER_TOUCHDOWN_AGL = 40;
 	static const float FLARE_AGL = 20;
 	static const float FLARE_END_AGL = 2.5;
 	static const float LAND_HARD_SINK = 8;
@@ -41,10 +43,11 @@ class MHJ_Constants
 	static const float FREEFALL_TURN_RATE = 1.35;
 	static const float FREEFALL_TURN_ALIGN = 2.8;
 	static const float FREEFALL_BANK_MAX = 34;
-	//! Prone fall is already belly-down. These are extra tuck / arch on that pose.
+	//! Extra craft pitch while the jumper is in the belly-pitched freefall seat.
 	static const float FREEFALL_PITCH_ARCH = 0;
 	static const float FREEFALL_PITCH_TRACK = -16;
 	static const float FREEFALL_PITCH_SLOW = 12;
+	static const float FREEFALL_START_SINK = 8;
 	static const int FREEFALL_INPUT_HOLD_MS = 250;
 	//! Body and canopy path never go past this. 90° straight down gimbal-flips look and lift.
 	static const float DIVE_ANGLE_MAX = 85;
@@ -61,9 +64,6 @@ class MHJ_Constants
 	static const float CANOPY_SINK_DECEL = 5;
 	static const float CANOPY_OPEN_SINK_DECEL = 18;
 	static const int CANOPY_DELETE_DELAY_MS = 200;
-	static const float CANOPY_OWNER_BLEND = 0.35;
-	static const float CANOPY_OWNER_SNAP_M = 1.5;
-	static const float CANOPY_OWNER_ANG_SNAP = 10;
 	static const float CANOPY_CL_TRIM = 0.55;
 	static const float CANOPY_CD_TRIM = 0.15;
 	static const float CANOPY_CL_DIVE_DROP = 0.50;
@@ -113,6 +113,8 @@ class MHJ_Constants
 	static const float WIND_SHEAR_MAX = 2.2;
 	static const float WIND_GUST = 0.12;
 	static const float WIND_TURB = 0.08;
+	//! Weather wind used by freefall and canopy. 0.25 = one quarter of engine wind.
+	static const float WIND_AERO_SCALE = 0.25;
 
 	static const float STEER_FILTER_TIME = 0.2;
 	static const float STEER_FILTER_MAX = 90;
@@ -120,6 +122,12 @@ class MHJ_Constants
 	static const float WORLD_SIZE_FALLBACK = 12800;
 
 	static const string CANOPY_PREFAB = "{C4E8A27B1F906D90}Prefabs/MHJ_DeployedCanopy.et";
+	static const string CANOPY_MESH_REMAP = "$remap 'Chute' '{85583F983D5A2BA8}Assets/ParachuteMK3/Data/Chute.emat'; $remap 'Line' '{31106DE7805868A1}Assets/ParachuteMK3/Data/Line.emat'; $remap '01__Default' '{17C975C41F8929BD}Assets/ParachuteMK3/Data/01__Default.emat'";
+	static const string SLOT_FREEFALL = "freefall";
+	static const string SLOT_CANOPY = "passenger_l02";
+	static const int CRAFT_INTERACTION_LAYER = 0x4040;
+	//! GetInVehicle forceTeleport ignores this; -1 matches vanilla teleport GetIn.
+	static const int GETIN_DOOR_ANY = -1;
 }
 
 //------------------------------------------------------------------------------------------------

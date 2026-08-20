@@ -42,7 +42,7 @@ class MHJ_FlightAero
 			speed = 0;
 
 		float shear = WindShearScale(mslY);
-		speed = speed * shear;
+		speed = speed * shear * MHJ_Constants.WIND_AERO_SCALE;
 
 		if (speed > 0.05)
 		{
