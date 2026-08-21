@@ -16,6 +16,7 @@ class MHJ_MapHost
 	protected static const float MIN_OPEN_SIZE = 32;
 	protected static const float PAN_NAV_PX = 48;
 	protected static const float ZOOM_STEP = 1.18;
+	protected static const float FOCUS_VIEW_M = 700;
 	protected static const int STABLE_MS = 50;
 	protected static const float SLOT_MOVE_PX = 8;
 	protected static const string MAP_CONTEXT = "MapContext";
@@ -40,6 +41,9 @@ class MHJ_MapHost
 
 	protected bool m_bClosing;
 	protected int m_iStableSince;
+	protected bool m_bHasFocusTarget;
+	protected float m_fFocusX;
+	protected float m_fFocusZ;
 
 	//------------------------------------------------------------------------------------------------
 	void ~MHJ_MapHost()
@@ -111,6 +115,9 @@ class MHJ_MapHost
 		m_fLastFw = -1;
 		m_fLastFh = -1;
 		m_iStableSince = 0;
+		m_bHasFocusTarget = false;
+		m_fFocusX = 0;
+		m_fFocusZ = 0;
 		m_bClosing = false;
 	}
 
@@ -243,6 +250,18 @@ class MHJ_MapHost
 	}
 
 	//------------------------------------------------------------------------------------------------
+	//! Pan and zoom the live planner to a world XZ. Safe before the session is live;
+	//! the pending target applies after EnsureFit. Zoom shows about FOCUS_VIEW_M
+	//! of the short map edge so nearby terrain stays readable.
+	void FocusWorld(float worldX, float worldZ)
+	{
+		m_bHasFocusTarget = true;
+		m_fFocusX = worldX;
+		m_fFocusZ = worldZ;
+		TryApplyFocus();
+	}
+
+	//------------------------------------------------------------------------------------------------
 	void Tick(MHJ_MapPicker picker)
 	{
 		if (!picker)
@@ -307,9 +326,50 @@ class MHJ_MapHost
 			return;
 
 		EnsureFit(mapEnt);
+		TryApplyFocus();
 		EnsurePips(mapEnt);
 		UpdatePips(picker);
 		UpdatePrompts(picker);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void TryApplyFocus()
+	{
+		if (!m_bHasFocusTarget)
+			return;
+		if (!m_bLive)
+			return;
+		if (!m_bZoomReady)
+			return;
+
+		SCR_MapEntity mapEnt = LiveMap();
+		if (!mapEnt)
+			return;
+
+		float target = 1;
+		CanvasWidget canvas = ResolveMapCanvas();
+		if (canvas)
+		{
+			float screenW;
+			float screenH;
+			canvas.GetScreenSize(screenW, screenH);
+			float shortSide = screenH;
+			if (screenW < screenH)
+				shortSide = screenW;
+			if (shortSide > 8)
+				target = shortSide / FOCUS_VIEW_M;
+		}
+		float maxZ = mapEnt.GetMaxZoom();
+		float minZ = mapEnt.GetMinZoom();
+		if (target > maxZ)
+			target = maxZ;
+		if (target < minZ)
+			target = minZ;
+		if (target < 0.0001)
+			return;
+
+		mapEnt.ZoomPanSmooth(target, m_fFocusX, m_fFocusZ, 0.28);
+		m_bHasFocusTarget = false;
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -784,6 +844,7 @@ class MHJ_MapHost
 		}
 
 		ApplyFitAndPips(SCR_MapEntity.GetMapInstance());
+		MHJ_HaloJumpMenu.NotifyPlannerMapReady();
 	}
 
 	//------------------------------------------------------------------------------------------------

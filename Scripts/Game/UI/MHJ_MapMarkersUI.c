@@ -2,13 +2,15 @@
 //! Display-only paper-map pins on the HALO planner. Vanilla MarkersUI also binds
 //! MapSelect / menu confirm which would steal click-to-drop. Strip those listeners
 //! while the planner is open. Null-check the game-mode marker manager so modes
-//! without one do not NPE. Do not mod SCR_MapMarkerBase — its snapshot serializers
-//! do not merge and RPCs that pass that type fail to compile.
+//! without one do not NPE. Planner conf has no SCR_MapCursorModule, so vanilla
+//! CleanupMarkerEditWidget must not call HandleDialog on a null cursor. Do not
+//! mod SCR_MapMarkerBase — its snapshot serializers do not merge and RPCs that
+//! pass that type fail to compile.
 //!
 //! Consumer: loaded with the addon. Do not instantiate.
 //!
-//! Extend: keep the planner input strip, cursor stamp, and the manager null-check;
-//! call super when the manager exists.
+//! Extend: keep the planner input strip, cursor stamp, manager null-check, and
+//! cursor-less CleanupMarkerEditWidget; call super when the manager exists.
 //------------------------------------------------------------------------------------------------
 modded class SCR_MapMarkersUI
 {
@@ -48,6 +50,18 @@ modded class SCR_MapMarkersUI
 			return;
 
 		super.OnMapClose(config);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	override void CleanupMarkerEditWidget()
+	{
+		if (m_MarkerEditRoot)
+			m_MarkerEditRoot.RemoveFromHierarchy();
+
+		m_bIsDelayed = false;
+
+		if (m_CursorModule)
+			m_CursorModule.HandleDialog(false);
 	}
 
 	//------------------------------------------------------------------------------------------------

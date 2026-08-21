@@ -2,6 +2,7 @@
 //! HALO drop planner. Hosted on the workspace so Workbench Play does not need
 //! chimeraMenus.conf (MenuManager never loads addon presets there).
 //! Native MapWidget is owned by MHJ_MapHost (planner session) and framed over the picker slot.
+//! Named drop sites come from MHJ_DropSiteCatalog (I&A fills it). Empty catalog hides the list.
 //------------------------------------------------------------------------------------------------
 class MHJ_HaloJumpMenu
 {
@@ -15,6 +16,12 @@ class MHJ_HaloJumpMenu
 	protected ref MUI_NumericField m_JumpAlt;
 	protected ref MUI_NumericField m_OpenAlt;
 	protected ref MUI_Label m_Status;
+	protected ref MUI_Label m_SitesLabel;
+	protected ref MUI_ScrollView m_SitesList;
+	protected ref array<ref MHJ_DropSite> m_aSites;
+	protected ref array<ref MHJ_DropSiteBind> m_aSiteBinds;
+	protected ref array<ref MUI_Button> m_aSiteButtons;
+	protected int m_iSelectedSite;
 	protected bool m_bSyncing;
 	protected bool m_bClosing;
 
@@ -53,6 +60,14 @@ class MHJ_HaloJumpMenu
 		if (!s_Instance)
 			return false;
 		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	static void NotifyPlannerMapReady()
+	{
+		if (!s_Instance)
+			return;
+		s_Instance.OnPlannerMapReady();
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -97,6 +112,8 @@ class MHJ_HaloJumpMenu
 		{
 			if (m_Picker)
 				m_Picker.SetMapHost(m_Map);
+			if (m_Picker && m_Picker.HasDrop())
+				m_Map.FocusWorld(m_Picker.GetDropX(), m_Picker.GetDropZ());
 		}
 		else
 		{
@@ -134,6 +151,15 @@ class MHJ_HaloJumpMenu
 		m_JumpAlt = null;
 		m_OpenAlt = null;
 		m_Status = null;
+		m_SitesLabel = null;
+		m_SitesList = null;
+		if (m_aSiteBinds)
+			m_aSiteBinds.Clear();
+		if (m_aSiteButtons)
+			m_aSiteButtons.Clear();
+		if (m_aSites)
+			m_aSites.Clear();
+		m_iSelectedSite = -1;
 		if (m_Host)
 		{
 			MUI_Runtime runtime = m_Host.GetRuntime();
@@ -181,17 +207,46 @@ class MHJ_HaloJumpMenu
 		liveHeader.SetKicker("MIKE'S HALO  //  DROP PLANNER");
 		liveHeader.SetIntro(0.16, 0.4, 18);
 
-		ref MUI_Label subtitle = runtime.CreateLabel("Click to set drop. Drag pans, wheel zooms. On controller: stick pans, triggers zoom, A sets drop at the centre reticle. D-pad down leaves the map.", "subtitle");
+		ref MUI_Label subtitle = runtime.CreateLabel("Pick a drop site or click the map. Drag pans, wheel zooms. Controller: D-pad the list, A selects, stick pans, triggers zoom.", "subtitle");
 		subtitle.SetFontSize(MUI_Theme.FONT_SMALL);
 		subtitle.SetMuted(true);
 
 		ref MUI_Hairline lineA = runtime.CreateHairline("lineA");
+
+		m_aSites = new array<ref MHJ_DropSite>();
+		m_aSiteBinds = new array<ref MHJ_DropSiteBind>();
+		m_aSiteButtons = new array<ref MUI_Button>();
+		m_iSelectedSite = -1;
+		MHJ_DropSiteCatalog.Collect(m_aSites);
+
+		if (m_aSites.Count() > 0)
+		{
+			m_SitesLabel = runtime.CreateLabel("DROP SITES", "sitesLabel");
+			m_SitesLabel.SetFontSize(MUI_Theme.FONT_SMALL);
+			m_SitesLabel.SetMuted(true);
+
+			m_SitesList = runtime.CreateScrollView("sitesList");
+			m_SitesList.SetGap(6);
+			int siteCount = m_aSites.Count();
+			float listH = siteCount * 50;
+			if (listH > 156)
+				listH = 156;
+			if (listH < 50)
+				listH = 50;
+			m_SitesList.SetViewportHeight(listH);
+			BuildSiteButtons(runtime);
+		}
 
 		m_Picker = new MHJ_MapPicker();
 		runtime.Adopt(m_Picker);
 		m_Picker.SetName("picker");
 		m_Picker.InitWorld();
 		m_Picker.GetOnChanged().Insert(OnPickerChanged);
+		if (m_SitesList)
+		{
+			m_Picker.SetHeight(340);
+			m_Picker.SetMinHeight(340);
+		}
 
 		m_CoordLabel = runtime.CreateLabel("", "coords");
 		m_CoordLabel.SetFontSize(MUI_Theme.FONT_SMALL);
@@ -233,6 +288,10 @@ class MHJ_HaloJumpMenu
 		card.AddChild(liveHeader);
 		card.AddChild(subtitle);
 		card.AddChild(lineA);
+		if (m_SitesLabel)
+			card.AddChild(m_SitesLabel);
+		if (m_SitesList)
+			card.AddChild(m_SitesList);
 		card.AddChild(m_Picker);
 		card.AddChild(m_CoordLabel);
 		card.AddChild(m_JumpAlt);
@@ -245,7 +304,179 @@ class MHJ_HaloJumpMenu
 		overlay.AddChild(card);
 		runtime.SetRoot(overlay);
 
+		if (m_aSites && m_aSites.Count() > 0)
+			SelectDropSite(0);
+		else
+			RefreshLabels();
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void BuildSiteButtons(notnull MUI_Runtime runtime)
+	{
+		if (!m_SitesList)
+			return;
+		if (!m_aSites)
+			return;
+
+		int count = m_aSites.Count();
+		int i;
+		for (i = 0; i < count; i++)
+		{
+			MHJ_DropSite site = m_aSites[i];
+			if (!site)
+				continue;
+
+			string label = site.m_sName;
+			if (label.IsEmpty())
+				label = "Drop " + (i + 1).ToString();
+
+			ref MUI_Button btn = runtime.CreateButton(label, "site_" + i.ToString());
+			btn.SetFillWidth();
+			btn.SetGrow(0);
+			m_SitesList.AddChild(btn);
+			m_aSiteButtons.Insert(btn);
+
+			ref MHJ_DropSiteBind bind = new MHJ_DropSiteBind();
+			bind.Init(this, i);
+			btn.GetOnClicked().Insert(bind.OnClicked);
+			m_aSiteBinds.Insert(bind);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------
+	void SelectDropSite(int index)
+	{
+		if (!m_aSites)
+			return;
+		if (index < 0)
+			return;
+		if (index >= m_aSites.Count())
+			return;
+
+		MHJ_DropSite site = m_aSites[index];
+		if (!site)
+			return;
+
+		m_iSelectedSite = index;
+		if (m_Picker)
+			m_Picker.SetDrop(site.m_fX, site.m_fZ);
+		if (m_Map)
+			m_Map.FocusWorld(site.m_fX, site.m_fZ);
+
+		int btnCount = 0;
+		if (m_aSiteButtons)
+			btnCount = m_aSiteButtons.Count();
+		int b;
+		for (b = 0; b < btnCount; b++)
+		{
+			MUI_Button btn = m_aSiteButtons[b];
+			if (!btn)
+				continue;
+			if (b == index)
+				btn.MakeAccent();
+			else
+				btn.MakeDefault();
+		}
+
 		RefreshLabels();
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void OnPlannerMapReady()
+	{
+		if (!m_aSites)
+			return;
+		if (!m_SitesList)
+			return;
+		if (!m_Host)
+			return;
+
+		MUI_Runtime runtime = m_Host.GetRuntime();
+		if (!runtime)
+			return;
+
+		ref array<ref MHJ_DropSite> incoming = new array<ref MHJ_DropSite>();
+		MHJ_DropSiteCatalog.Collect(incoming);
+		int incomingCount = incoming.Count();
+		int i;
+		for (i = 0; i < incomingCount; i++)
+		{
+			MHJ_DropSite site = incoming[i];
+			if (!site)
+				continue;
+			if (HasSite(site.m_sName, site.m_fX, site.m_fZ))
+				continue;
+			if (m_aSites.Count() >= 16)
+				break;
+
+			m_aSites.Insert(site);
+			AppendSiteButton(runtime, site, m_aSites.Count() - 1);
+		}
+
+		int btnCount = 0;
+		if (m_aSiteButtons)
+			btnCount = m_aSiteButtons.Count();
+		int b;
+		for (b = 0; b < btnCount; b++)
+		{
+			MUI_Button btn = m_aSiteButtons[b];
+			if (!btn)
+				continue;
+			if (b == m_iSelectedSite)
+				btn.MakeAccent();
+			else
+				btn.MakeDefault();
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected bool HasSite(string name, float x, float z)
+	{
+		if (!m_aSites)
+			return false;
+
+		float sameSq = 45 * 45;
+		int count = m_aSites.Count();
+		int i;
+		for (i = 0; i < count; i++)
+		{
+			MHJ_DropSite existing = m_aSites[i];
+			if (!existing)
+				continue;
+			float dx = existing.m_fX - x;
+			float dz = existing.m_fZ - z;
+			if (dx * dx + dz * dz <= sameSq)
+				return true;
+			if (existing.m_sName == name && dx * dx + dz * dz <= 180 * 180)
+				return true;
+		}
+		return false;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void AppendSiteButton(notnull MUI_Runtime runtime, notnull MHJ_DropSite site, int index)
+	{
+		if (!m_SitesList)
+			return;
+		if (!m_aSiteButtons)
+			return;
+		if (!m_aSiteBinds)
+			return;
+
+		string label = site.m_sName;
+		if (label.IsEmpty())
+			label = "Drop " + (index + 1).ToString();
+
+		ref MUI_Button btn = runtime.CreateButton(label, "site_" + index.ToString());
+		btn.SetFillWidth();
+		btn.SetGrow(0);
+		m_SitesList.AddChild(btn);
+		m_aSiteButtons.Insert(btn);
+
+		ref MHJ_DropSiteBind bind = new MHJ_DropSiteBind();
+		bind.Init(this, index);
+		btn.GetOnClicked().Insert(bind.OnClicked);
+		m_aSiteBinds.Insert(bind);
 	}
 
 	//------------------------------------------------------------------------------------------------
