@@ -14,7 +14,8 @@ class MHJ_Constants
 
 	static const float OPEN_MARGIN = 50;
 	static const float LAND_AGL = 1.6;
-	//! Server may accept an owner-grounded RPC while still this high (dead-reckon overshoot).
+	//! Sanity gap from authority craft to owner-reported ground. Reconciled
+	//! prediction should keep this to metres; 40 m is a cheat / desync cap.
 	static const float CANOPY_OWNER_TOUCHDOWN_AGL = 40;
 	static const float FLARE_AGL = 20;
 	static const float FLARE_END_AGL = 2.5;
@@ -111,6 +112,16 @@ class MHJ_Constants
 	static const float CANOPY_DIVE_IN_MAX = 1.8;
 	//! Dedicated clients wait for the server canopy to replicate before GetIn.
 	static const float CANOPY_BOARD_WAIT = 12;
+	//! Pose RPC and owner steer sample rate. Hard-applying this origin every
+	//! packet rubberbands by speed×RTT; the owner replays unacked samples instead.
+	static const float FLIGHT_STATE_DT = 0.033;
+	//! Zero server sticks if no owner steer arrives within this window.
+	static const float INPUT_STALE_SEC = 0.3;
+	//! Owner input history kept for snapshot replay. ~1.5 s at 60 Hz.
+	static const int INPUT_RING_MAX = 96;
+	//! Visual offset from a replay correction decays over this many seconds.
+	static const float REPLICA_VISUAL_ERROR_TIME = 0.3;
+	static const float REPLICA_SNAP_AGE_MAX = 0.25;
 
 	static const float WIND_REF_HEIGHT = 10;
 	static const float WIND_SHEAR_EXP = 0.11;
