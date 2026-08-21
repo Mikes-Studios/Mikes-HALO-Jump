@@ -2,6 +2,8 @@
 //! Owner-owned jump craft. Freefall and canopy share this cargo entity.
 //! Occupancy gates steer. Authority ticks in EOnSimulate. Gravity stays off
 //! on the craft; drive with SetVelocity plus ForceNodeMovement.
+//! Dedicated owner replicas predict the same aero, then rewind to each
+//! authority snapshot and replay unacked input. Proxies extrapolate.
 //------------------------------------------------------------------------------------------------
 [ComponentEditorProps(category: "MHJ", description: "Server-authoritative owner-owned HALO jump craft.")]
 class MHJ_CanopyFlightClass : ScriptComponentClass
@@ -65,6 +67,23 @@ class MHJ_CanopyFlight : ScriptComponent
 	protected vector m_vWorldVel;
 	protected vector m_vWind;
 	protected float m_fDiagTime;
+	protected bool m_bReplicaLive;
+	protected vector m_vSnapOrigin;
+	protected vector m_vSnapVel;
+	protected vector m_vSnapYpr;
+	protected vector m_vPredOrigin;
+	protected float m_fSnapAge;
+	protected float m_fReplicaDiag;
+	protected float m_fPktDt;
+	protected float m_fSincePacket;
+	protected float m_fOriginStick;
+	protected int m_iInputSeq;
+	protected int m_iAckSeq;
+	protected int m_iReplayFrames;
+	protected bool m_bPendingSnap;
+	protected vector m_vVisualError;
+	protected ref MHJ_FlightState m_PendingSnap;
+	protected ref array<ref MHJ_InputSample> m_aInputRing;
 
 	//------------------------------------------------------------------------------------------------
 	static bool OccupantIsInCanopy(IEntity character)
@@ -185,6 +204,7 @@ class MHJ_CanopyFlight : ScriptComponent
 		m_bInputListening = false;
 		m_sFlightMode = "EXIT";
 		m_bServerSession = true;
+		m_iAckSeq = 0;
 
 		WakePhysics();
 		SyncSpeedFromWorld();
@@ -193,7 +213,7 @@ class MHJ_CanopyFlight : ScriptComponent
 	}
 
 	//------------------------------------------------------------------------------------------------
-	//! Owner-local replica setup. No aero or movement is run here.
+	//! Owner-local replica setup. Prediction starts after the first pose RPC.
 	void MHJ_BeginOwnerSession(notnull ChimeraCharacter jumper, float openAltitude)
 	{
 		m_pJumper = jumper;
@@ -205,6 +225,22 @@ class MHJ_CanopyFlight : ScriptComponent
 		m_bOwnerSession = true;
 		m_bLanding = false;
 		m_fTouchdownCooldown = 0;
+		m_iInputSeq = 0;
+		m_iAckSeq = 0;
+		m_iReplayFrames = 0;
+		m_bPendingSnap = false;
+		m_vVisualError = vector.Zero;
+		if (!m_PendingSnap)
+			m_PendingSnap = new MHJ_FlightState();
+		if (!m_aInputRing)
+			m_aInputRing = new array<ref MHJ_InputSample>();
+		m_aInputRing.Clear();
+		IEntity craft = m_Owner;
+		if (!craft)
+			craft = GetOwner();
+		if (craft)
+			m_vPredOrigin = craft.GetOrigin();
+		MHJ_Log.Info("Replica owner session y=" + m_vPredOrigin[1].ToString());
 		if (!MHJ_JumpHud.IsOpen())
 			MHJ_JumpHud.Open();
 		ShowPhaseHint();
@@ -343,11 +379,17 @@ class MHJ_CanopyFlight : ScriptComponent
 			return;
 
 		LockCanopySpin(owner);
-
-		if (!IsAuthority() || !m_bServerSession || m_bLanding)
+		if (m_bLanding)
 			return;
 
-		TickAuthorityFlight(owner, timeSlice);
+		if (IsAuthority())
+		{
+			if (m_bServerSession)
+				TickAuthorityFlight(owner, timeSlice);
+			return;
+		}
+
+		TickReplicaMotion(owner, timeSlice);
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -357,9 +399,28 @@ class MHJ_CanopyFlight : ScriptComponent
 			return;
 
 		LockCanopySpin(owner);
-		if (!IsAuthority() || !m_bServerSession || m_bLanding)
+		if (m_bLanding)
 			return;
 
+		if (IsAuthority())
+		{
+			if (m_bServerSession)
+				ApplyAuthorityOrientation();
+			return;
+		}
+
+		if (!m_bReplicaLive)
+			return;
+
+		if (!IsOwnedHere() || !m_bOwnerSession)
+		{
+			ApplyReplicaProxyPose(owner);
+			return;
+		}
+
+		owner.SetOrigin(m_vPredOrigin + m_vVisualError);
+		m_fOriginStick = (owner.GetOrigin() - m_vPredOrigin).Length();
+		ApplyReplicaVelocity();
 		ApplyAuthorityOrientation();
 	}
 
@@ -427,7 +488,7 @@ class MHJ_CanopyFlight : ScriptComponent
 		if (m_bBoarded)
 		{
 			m_fInputAge = m_fInputAge + timeSlice;
-			if (m_fInputAge > 1.2)
+			if (m_fInputAge > MHJ_Constants.INPUT_STALE_SEC)
 			{
 				m_fNetTurn = 0;
 				m_fNetPitch = 0;
@@ -482,15 +543,15 @@ class MHJ_CanopyFlight : ScriptComponent
 	protected void TickOwner(float timeSlice)
 	{
 		EnableOwnerControls();
-		ReadInput();
-		m_fInputSendTime = m_fInputSendTime + timeSlice;
-		if (m_fInputSendTime >= 0.05)
+		if (IsAuthority())
 		{
-			m_fInputSendTime = 0;
-			if (IsAuthority())
+			ReadInput();
+			m_fInputSendTime = m_fInputSendTime + timeSlice;
+			if (m_fInputSendTime >= MHJ_Constants.FLIGHT_STATE_DT)
+			{
+				m_fInputSendTime = 0;
 				ApplyOwnedInput(m_fTurnInput, m_fPitchInput);
-			else if (IsOwnedHere())
-				Rpc(RpcAsk_MHJ_Steer, m_fTurnInput, m_fPitchInput);
+			}
 		}
 
 		if (m_fTouchdownCooldown > 0)
@@ -504,8 +565,8 @@ class MHJ_CanopyFlight : ScriptComponent
 	}
 
 	//------------------------------------------------------------------------------------------------
-	//! Owner view can hit terrain seconds before authority AGL. Ask the server to
-	//! land; it rejects unless the craft is already in the touchdown band.
+	//! Owner view can hit terrain a frame before authority AGL. Ask the server
+	//! to land; it rejects if the 3D gap is still beyond the sanity cap.
 	protected void SendOwnerTouchdown()
 	{
 		if (m_bLanding)
@@ -516,15 +577,23 @@ class MHJ_CanopyFlight : ScriptComponent
 			return;
 
 		m_fTouchdownCooldown = 0.2;
+		vector origin = m_vPredOrigin;
+		if (origin.LengthSq() < 0.01)
+		{
+			IEntity craft = GetOwner();
+			if (craft)
+				origin = craft.GetOrigin();
+		}
+
 		if (IsAuthority())
-			RpcAsk_MHJ_OwnerTouchdown();
+			RpcAsk_MHJ_OwnerTouchdown(origin);
 		else
-			Rpc(RpcAsk_MHJ_OwnerTouchdown);
+			Rpc(RpcAsk_MHJ_OwnerTouchdown, origin);
 	}
 
 	//------------------------------------------------------------------------------------------------
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
-	protected void RpcAsk_MHJ_OwnerTouchdown()
+	protected void RpcAsk_MHJ_OwnerTouchdown(vector ownerOrigin)
 	{
 		if (!IsAuthority() || m_bLanding)
 			return;
@@ -533,27 +602,35 @@ class MHJ_CanopyFlight : ScriptComponent
 		if (!ValidateExpectedOccupant())
 			return;
 
-		float agl = GetAgl();
-		if (agl > MHJ_Constants.CANOPY_OWNER_TOUCHDOWN_AGL)
+		IEntity craft = GetOwner();
+		if (craft)
 		{
-			MHJ_Log.Warning("Owner touchdown ignored agl=" + agl.ToString());
-			return;
+			float gap = (ownerOrigin - craft.GetOrigin()).Length();
+			if (gap > MHJ_Constants.CANOPY_OWNER_TOUCHDOWN_AGL)
+			{
+				MHJ_Log.Warning("Owner touchdown ignored gap=" + gap.ToString());
+				return;
+			}
 		}
 
-		MHJ_Log.Land("Owner touchdown agl=" + agl.ToString());
+		PlaceCraftAtOwnerGround(ownerOrigin);
+		MHJ_Log.Land("Owner touchdown agl=" + GetAgl().ToString());
 		FinishLanding();
 	}
 
 	//------------------------------------------------------------------------------------------------
 	[RplRpc(RplChannel.Unreliable, RplRcver.Server)]
-	protected void RpcAsk_MHJ_Steer(float turn, float pitch)
+	protected void RpcAsk_MHJ_Steer(float turn, float pitch, int seq)
 	{
 		if (!IsAuthority())
 			return;
 		if (!ValidateExpectedOccupant())
 			return;
+		if (seq < m_iAckSeq)
+			return;
 
 		ApplyOwnedInput(turn, pitch);
+		m_iAckSeq = seq;
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -1161,7 +1238,7 @@ class MHJ_CanopyFlight : ScriptComponent
 	protected void SendFlightState(float timeSlice)
 	{
 		m_fStateSendTime = m_fStateSendTime + timeSlice;
-		if (m_fStateSendTime < 0.05)
+		if (m_fStateSendTime < MHJ_Constants.FLIGHT_STATE_DT)
 			return;
 		m_fStateSendTime = 0;
 
@@ -1175,18 +1252,34 @@ class MHJ_CanopyFlight : ScriptComponent
 		ypr[0] = m_fHeading * Math.RAD2DEG;
 		ypr[1] = ClampDivePitch(m_fPitch);
 		ypr[2] = m_fBank;
-		Rpc(RpcDo_MHJ_FlightState, m_vWorldVel, m_vWind, ModeToId(m_sFlightMode), m_fOpenT, m_fPathDeg, m_fHeading, owner.GetOrigin(), ypr);
+		vector auxA;
+		auxA[0] = m_fSimT;
+		auxA[1] = m_iAckSeq;
+		auxA[2] = m_fOpenT;
+		vector auxB;
+		auxB[0] = m_fPathDeg;
+		auxB[1] = m_fHeading;
+		auxB[2] = m_fTurnFilt;
+		vector auxC;
+		auxC[0] = m_fTurnFiltV;
+		auxC[1] = m_fPitchInputFilt;
+		auxC[2] = m_fPitchInputFiltV;
+		vector auxD;
+		auxD[0] = m_fPathDegV;
+		auxD[1] = m_fBankV;
+		auxD[2] = m_fPitchV;
+		Rpc(RpcDo_MHJ_FlightState, m_vWorldVel, owner.GetOrigin(), ypr, auxA, auxB, auxC, auxD, ModeToId(m_sFlightMode) + (m_iAckSeq * 16));
 	}
 
 	//------------------------------------------------------------------------------------------------
 	[RplRpc(RplChannel.Unreliable, RplRcver.Broadcast)]
-	protected void RpcDo_MHJ_FlightState(vector worldVelocity, vector wind, int modeId, float openTime, float pathDeg, float heading, vector origin, vector ypr)
+	protected void RpcDo_MHJ_FlightState(vector worldVelocity, vector origin, vector ypr, vector auxA, vector auxB, vector auxC, vector auxD, int packed)
 	{
 		if (IsAuthority())
 			return;
 
-		m_vWorldVel = worldVelocity;
-		m_vWind = wind;
+		int modeId = packed % 16;
+		int ackSeq = packed / 16;
 		m_sFlightMode = IdToMode(modeId);
 		if (modeId >= 6)
 		{
@@ -1198,11 +1291,7 @@ class MHJ_CanopyFlight : ScriptComponent
 			m_ePhase = MHJ_EHaloPhase.CANOPY;
 		}
 		ApplyCraftVisual(m_ePhase == MHJ_EHaloPhase.CANOPY);
-		m_fOpenT = openTime;
-		m_fPathDeg = pathDeg;
-		m_fHeading = heading;
-		SyncSpeedFromWorld();
-		ApplyReplicaPose(origin, ypr, worldVelocity);
+		StoreReplicaSnapshot(origin, ypr, worldVelocity, auxA, auxB, auxC, auxD, ackSeq);
 
 		if (m_bOwnerSession && m_ePhase == MHJ_EHaloPhase.CANOPY && !m_bSnatchFired)
 		{
@@ -1369,10 +1458,7 @@ class MHJ_CanopyFlight : ScriptComponent
 	//------------------------------------------------------------------------------------------------
 	protected void IntegrateCanopyStep(float pDt)
 	{
-		IEntity owner = GetOwner();
-		float msl = 0;
-		if (owner)
-			msl = owner.GetOrigin()[1];
+		float msl = GetSimAltitude();
 
 		float density = MHJ_FlightAero.DensityRatio(msl);
 		float inflation = MHJ_FlightAero.CanopyInflation(m_fOpenT);
@@ -1692,6 +1778,31 @@ class MHJ_CanopyFlight : ScriptComponent
 	}
 
 	//------------------------------------------------------------------------------------------------
+	//! Snap authority onto the owner's reported ground so GetOut is where they
+	//! saw terrain if a few metres of residual remain.
+	protected void PlaceCraftAtOwnerGround(vector ownerOrigin)
+	{
+		IEntity owner = m_Owner;
+		if (!owner)
+			owner = GetOwner();
+		if (!owner)
+			return;
+
+		BaseWorld world = owner.GetWorld();
+		if (!world)
+			world = GetGame().GetWorld();
+		if (!world)
+			return;
+
+		vector previousOrigin = owner.GetOrigin();
+		float terrainY = SCR_TerrainHelper.GetTerrainY(ownerOrigin, world, true);
+		ownerOrigin[1] = terrainY + MHJ_Constants.LAND_AGL;
+		owner.SetOrigin(ownerOrigin);
+		if (m_Rpl)
+			m_Rpl.ForceNodeMovement(previousOrigin);
+	}
+
+	//------------------------------------------------------------------------------------------------
 	//! Drop the authority craft onto terrain before GetOut so an early owner
 	//! touchdown does not eject from 10 m AGL.
 	protected void StickCraftToTerrain()
@@ -1724,12 +1835,23 @@ class MHJ_CanopyFlight : ScriptComponent
 	//------------------------------------------------------------------------------------------------
 	protected bool IsBelowTerrain()
 	{
-		IEntity owner = GetOwner();
-		if (!owner)
-			return false;
+		vector position;
+		if (m_bReplicaLive && IsOwnedHere() && m_bOwnerSession)
+		{
+			position = m_vPredOrigin;
+		}
+		else
+		{
+			IEntity owner = GetOwner();
+			if (!owner)
+				return false;
+			position = owner.GetOrigin();
+		}
 
-		vector position = owner.GetOrigin();
-		BaseWorld world = owner.GetWorld();
+		IEntity craft = GetOwner();
+		BaseWorld world;
+		if (craft)
+			world = craft.GetWorld();
 		if (!world)
 			world = GetGame().GetWorld();
 		if (!world)
@@ -1740,10 +1862,10 @@ class MHJ_CanopyFlight : ScriptComponent
 	}
 
 	//------------------------------------------------------------------------------------------------
-	//! Cargo has no NwkMovementComponent. Native rpl will not move the replica.
-	//! Apply the authority snapshot every packet so physics mismatch cannot
-	//! accumulate. Velocity fills the interval between snapshots. Keep gravity off.
-	protected void ApplyReplicaPose(vector origin, vector ypr, vector worldVelocity)
+	//! Cargo has no NwkMovementComponent. Native rpl will not fly the replica.
+	//! Owner restores each authority snapshot and replays unacked input.
+	//! Proxies extrapolate origin + vel * age.
+	protected void StoreReplicaSnapshot(vector origin, vector ypr, vector worldVelocity, vector auxA, vector auxB, vector auxC, vector auxD, int ackSeq)
 	{
 		IEntity owner = m_Owner;
 		if (!owner)
@@ -1751,8 +1873,255 @@ class MHJ_CanopyFlight : ScriptComponent
 		if (!owner)
 			return;
 
-		owner.SetOrigin(origin);
-		owner.SetYawPitchRoll(ypr);
+		vector previousOrigin = owner.GetOrigin();
+		bool firstPose = !m_bReplicaLive;
+		m_vSnapOrigin = origin;
+		m_vSnapVel = worldVelocity;
+		m_vSnapYpr = ypr;
+		m_fSnapAge = 0;
+		m_fPktDt = m_fSincePacket;
+		m_fSincePacket = 0;
+
+		ref MHJ_FlightState state = new MHJ_FlightState();
+		state.FromPacket(origin, worldVelocity, ypr, auxA, auxB, auxC, auxD, ackSeq);
+
+		if (firstPose)
+		{
+			m_bReplicaLive = true;
+			RestoreFlightState(state);
+			m_vWind = MHJ_FlightAero.WindWorld(m_vPredOrigin[1], m_fSimT);
+			owner.SetOrigin(origin);
+			owner.SetYawPitchRoll(ypr);
+			ApplyReplicaVelocity();
+			SyncSpeedFromWorld();
+			MHJ_Log.Info("Replica pose started");
+			return;
+		}
+
+		if (IsOwnedHere() && m_bOwnerSession)
+		{
+			if (!m_PendingSnap)
+				m_PendingSnap = new MHJ_FlightState();
+			m_PendingSnap.FromPacket(origin, worldVelocity, ypr, auxA, auxB, auxC, auxD, ackSeq);
+			m_bPendingSnap = true;
+			return;
+		}
+
+		float speedSq = worldVelocity.LengthSq();
+		if (speedSq > 0.01)
+		{
+			m_fSnapAge = vector.Dot(previousOrigin - origin, worldVelocity) / speedSq;
+			if (m_fSnapAge < 0)
+				m_fSnapAge = 0;
+			if (m_fSnapAge > MHJ_Constants.REPLICA_SNAP_AGE_MAX)
+				m_fSnapAge = MHJ_Constants.REPLICA_SNAP_AGE_MAX;
+		}
+
+		m_vWorldVel = worldVelocity;
+		m_fHeading = state.m_fHeading;
+		m_fPitch = ypr[1];
+		m_fBank = ypr[2];
+		m_fPathDeg = state.m_fPathDeg;
+		m_fOpenT = state.m_fOpenT;
+		m_fSimT = state.m_fSimT;
+		SyncSpeedFromWorld();
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void RestoreFlightState(notnull MHJ_FlightState state)
+	{
+		m_vPredOrigin = state.m_vOrigin;
+		m_vWorldVel = state.m_vWorldVel;
+		m_fHeading = state.m_fHeading;
+		m_fPitch = state.m_fPitch;
+		m_fBank = state.m_fBank;
+		m_fBankV = state.m_fBankV;
+		m_fPitchV = state.m_fPitchV;
+		m_fPathDeg = state.m_fPathDeg;
+		m_fPathDegV = state.m_fPathDegV;
+		m_fOpenT = state.m_fOpenT;
+		m_fSimT = state.m_fSimT;
+		m_fTurnFilt = state.m_fTurnFilt;
+		m_fTurnFiltV = state.m_fTurnFiltV;
+		m_fPitchInputFilt = state.m_fPitchInputFilt;
+		m_fPitchInputFiltV = state.m_fPitchInputFiltV;
+		m_iAckSeq = state.m_iAckSeq;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void ReconcileOwnerFromSnapshot(notnull MHJ_FlightState state)
+	{
+		vector before = m_vPredOrigin;
+		RestoreFlightState(state);
+		DropAckedInput(state.m_iAckSeq);
+		ReplayUnackedInput();
+		m_vWind = MHJ_FlightAero.WindWorld(m_vPredOrigin[1], m_fSimT);
+		SyncSpeedFromWorld();
+		m_vVisualError = m_vVisualError + (before - m_vPredOrigin);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void DropAckedInput(int ackSeq)
+	{
+		if (!m_aInputRing)
+			return;
+
+		while (m_aInputRing.Count() > 0)
+		{
+			MHJ_InputSample sample = m_aInputRing.Get(0);
+			if (!sample)
+			{
+				m_aInputRing.RemoveOrdered(0);
+				continue;
+			}
+			if (sample.m_iSeq > ackSeq)
+				return;
+
+			m_aInputRing.RemoveOrdered(0);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void ReplayUnackedInput()
+	{
+		m_iReplayFrames = 0;
+		if (!m_aInputRing)
+			return;
+
+		int count = m_aInputRing.Count();
+		m_iReplayFrames = count;
+		int i;
+		for (i = 0; i < count; i++)
+		{
+			MHJ_InputSample sample = m_aInputRing.Get(i);
+			if (!sample)
+				continue;
+
+			m_fTurnInput = sample.m_fTurn;
+			m_fPitchInput = sample.m_fPitch;
+			IntegrateOwnerAero(sample.m_fDt);
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void PushOwnerInput(int seq, float turn, float pitch, float dt)
+	{
+		if (!m_aInputRing)
+			m_aInputRing = new array<ref MHJ_InputSample>();
+
+		ref MHJ_InputSample sample = new MHJ_InputSample();
+		sample.m_iSeq = seq;
+		sample.m_fTurn = turn;
+		sample.m_fPitch = pitch;
+		sample.m_fDt = dt;
+		m_aInputRing.Insert(sample);
+
+		while (m_aInputRing.Count() > MHJ_Constants.INPUT_RING_MAX)
+			m_aInputRing.RemoveOrdered(0);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void DecayVisualError(float timeSlice)
+	{
+		float window = MHJ_Constants.REPLICA_VISUAL_ERROR_TIME;
+		if (window < 0.05)
+			window = 0.05;
+		float k = timeSlice / window;
+		if (k > 1)
+			k = 1;
+		m_vVisualError = m_vVisualError * (1 - k);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void IntegrateOwnerAero(float timeSlice)
+	{
+		m_fSimT = m_fSimT + timeSlice;
+		m_vWind = MHJ_FlightAero.WindWorld(m_vPredOrigin[1], m_fSimT);
+
+		float agl = GetAgl();
+		if (m_ePhase == MHJ_EHaloPhase.FREEFALL)
+		{
+			ApplyFreefall(timeSlice);
+			IntegrateFreefall(timeSlice);
+		}
+		else
+		{
+			ApplyCanopy(timeSlice, agl);
+			IntegrateAero(timeSlice);
+		}
+
+		m_vPredOrigin = m_vPredOrigin + m_vWorldVel * timeSlice;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected float GetSimAltitude()
+	{
+		if (m_bReplicaLive && IsOwnedHere() && m_bOwnerSession)
+			return m_vPredOrigin[1];
+
+		IEntity owner = GetOwner();
+		if (!owner)
+			return 0;
+		return owner.GetOrigin()[1];
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void TickReplicaMotion(notnull IEntity owner, float timeSlice)
+	{
+		if (!m_bReplicaLive)
+			return;
+
+		m_fSnapAge = m_fSnapAge + timeSlice;
+		m_fSincePacket = m_fSincePacket + timeSlice;
+		if (IsOwnedHere() && m_bOwnerSession)
+			TickReplicaOwnerPredict(owner, timeSlice);
+
+		ApplyReplicaVelocity();
+		LogReplicaTick(owner, timeSlice);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void TickReplicaOwnerPredict(notnull IEntity owner, float timeSlice)
+	{
+		if (m_bPendingSnap && m_PendingSnap)
+		{
+			ReconcileOwnerFromSnapshot(m_PendingSnap);
+			m_bPendingSnap = false;
+		}
+
+		m_fInputSendTime = m_fInputSendTime + timeSlice;
+		if (m_fInputSendTime >= MHJ_Constants.FLIGHT_STATE_DT)
+		{
+			m_fInputSendTime = 0;
+			ReadInput();
+			m_iInputSeq = m_iInputSeq + 1;
+			Rpc(RpcAsk_MHJ_Steer, m_fTurnInput, m_fPitchInput, m_iInputSeq);
+		}
+
+		PushOwnerInput(m_iInputSeq, m_fTurnInput, m_fPitchInput, timeSlice);
+		DecayVisualError(timeSlice);
+		IntegrateOwnerAero(timeSlice);
+		ApplyAuthorityOrientation();
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! Apply after physics so velocity integration cannot add a one-frame sawtooth.
+	//! Packet reconnect keeps snapAge on the visual so a new origin is not a yank.
+	protected void ApplyReplicaProxyPose(notnull IEntity owner)
+	{
+		vector predicted = m_vSnapOrigin + m_vSnapVel * m_fSnapAge;
+		owner.SetOrigin(predicted);
+		owner.SetYawPitchRoll(m_vSnapYpr);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void ApplyReplicaVelocity()
+	{
+		IEntity owner = m_Owner;
+		if (!owner)
+			owner = GetOwner();
+		if (!owner)
+			return;
 
 		Physics physics = owner.GetPhysics();
 		if (!physics)
@@ -1761,7 +2130,62 @@ class MHJ_CanopyFlight : ScriptComponent
 		physics.EnableGravity(false);
 		physics.SetActive(ActiveState.ACTIVE);
 		physics.SetAngularVelocity(vector.Zero);
-		physics.SetVelocity(worldVelocity);
+		physics.SetVelocity(m_vWorldVel);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void LogReplicaTick(notnull IEntity owner, float timeSlice)
+	{
+		m_fReplicaDiag = m_fReplicaDiag + timeSlice;
+		if (m_fReplicaDiag < 0.5)
+			return;
+		m_fReplicaDiag = 0;
+
+		vector visual = owner.GetOrigin();
+		vector pred = visual;
+		if (IsOwnedHere() && m_bOwnerSession)
+			pred = m_vPredOrigin;
+
+		vector snap = m_vSnapOrigin + m_vSnapVel * m_fSnapAge;
+		vector predDelta = pred - snap;
+		vector visPred = visual - pred;
+		float visPredM = visPred.Length();
+		float predSnapM = predDelta.Length();
+		float visSnapM = (visual - snap).Length();
+
+		float along = 0;
+		float lat = predSnapM;
+		float speed = m_vSnapVel.Length();
+		if (speed > 0.1)
+		{
+			along = vector.Dot(predDelta, m_vSnapVel) / speed;
+			vector alongVec = m_vSnapVel * (along / speed);
+			lat = (predDelta - alongVec).Length();
+		}
+
+		float physVy = 0;
+		Physics physics = owner.GetPhysics();
+		if (physics)
+			physVy = physics.GetVelocity()[1];
+
+		float visErr = m_vVisualError.Length();
+		bool ownerSession = IsOwnedHere() && m_bOwnerSession;
+		string message = "Replica diag owner=" + MHJ_Log.Flag(ownerSession);
+		message = message + " phase=" + m_ePhase.ToString();
+		message = message + " pktDt=" + m_fPktDt.ToString();
+		message = message + " visPred=" + visPredM.ToString();
+		message = message + " predSnap=" + predSnapM.ToString();
+		message = message + " visSnap=" + visSnapM.ToString();
+		message = message + " along=" + along.ToString();
+		message = message + " lat=" + lat.ToString();
+		message = message + " tas=" + m_fAirspeed.ToString();
+		message = message + " vy=" + m_fVelY.ToString();
+		message = message + " pvy=" + physVy.ToString();
+		message = message + " stick=" + m_fOriginStick.ToString();
+		message = message + " ackAge=" + m_iReplayFrames.ToString();
+		message = message + " visErr=" + visErr.ToString();
+		message = message + " y=" + visual[1].ToString();
+		MHJ_Log.Info(message);
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -1774,14 +2198,27 @@ class MHJ_CanopyFlight : ScriptComponent
 	//------------------------------------------------------------------------------------------------
 	protected float GetAgl()
 	{
-		IEntity owner = GetOwner();
-		if (!owner)
-			return 0;
+		vector position;
+		if (m_bReplicaLive && IsOwnedHere() && m_bOwnerSession)
+		{
+			position = m_vPredOrigin;
+		}
+		else
+		{
+			IEntity owner = GetOwner();
+			if (!owner)
+				return 0;
+			position = owner.GetOrigin();
+		}
 
-		vector position = owner.GetOrigin();
-		BaseWorld world = owner.GetWorld();
-		if (!world)
-			world = GetGame().GetWorld();
+		BaseWorld world = GetGame().GetWorld();
+		IEntity craft = GetOwner();
+		if (craft)
+		{
+			BaseWorld craftWorld = craft.GetWorld();
+			if (craftWorld)
+				world = craftWorld;
+		}
 		if (!world)
 			return position[1];
 
@@ -1869,10 +2306,7 @@ class MHJ_CanopyFlight : ScriptComponent
 	//------------------------------------------------------------------------------------------------
 	protected void IntegrateFreefallStep(float pDt)
 	{
-		IEntity owner = GetOwner();
-		float msl = 0;
-		if (owner)
-			msl = owner.GetOrigin()[1];
+		float msl = GetSimAltitude();
 
 		float density = MHJ_FlightAero.DensityRatio(msl);
 		m_vWorldVel[1] = m_vWorldVel[1] - MHJ_Constants.GRAVITY * pDt;
