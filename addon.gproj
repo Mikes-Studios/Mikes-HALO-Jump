@@ -1,9 +1,9 @@
 GameProject {
- ID "MikesHALOJump"
- GUID "C4E8A27B1F906D53"
- TITLE "Mike's HALO Jump"
+ ID "MikesHALOJumpExp"
+ GUID "3F8C0B6E5A172D94"
+ TITLE "Mike's HALO Jump (Experimental)"
  Dependencies {
-  "58D0FB3206B6F859" "B3F91C6A4E275D08"
+  "58D0FB3206B6F859" "7A4E19C2D8B063F5"
  }
  Configurations {
   GameProjectConfig PC {
