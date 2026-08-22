@@ -6,7 +6,7 @@ class MHJ_Constants
 {
 	static const float JUMP_ALT_MIN = 200;
 	static const float JUMP_ALT_MAX = 3000;
-	static const float JUMP_ALT_DEFAULT = 1000;
+	static const float JUMP_ALT_DEFAULT = 500;
 
 	static const float OPEN_ALT_MIN = 80;
 	static const float OPEN_ALT_MAX = 1500;

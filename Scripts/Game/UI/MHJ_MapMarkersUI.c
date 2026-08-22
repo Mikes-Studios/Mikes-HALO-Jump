@@ -1,5 +1,6 @@
 //------------------------------------------------------------------------------------------------
-//! Display-only paper-map pins on the HALO planner. Vanilla MarkersUI also binds
+//! Display-only paper-map pins on the HALO planner. Pins clip to MapFrame.
+//! Vanilla MarkersUI also binds
 //! MapSelect / menu confirm which would steal click-to-drop. Strip those listeners
 //! while the planner is open. Null-check the game-mode marker manager so modes
 //! without one do not NPE. Planner conf has no SCR_MapCursorModule, so vanilla
@@ -9,8 +10,9 @@
 //!
 //! Consumer: loaded with the addon. Do not instantiate.
 //!
-//! Extend: keep the planner input strip, cursor stamp, manager null-check, and
-//! cursor-less CleanupMarkerEditWidget; call super when the manager exists.
+//! Extend: keep the planner input strip, cursor stamp, manager null-check,
+//! MapFrame clip, and cursor-less CleanupMarkerEditWidget; call super when
+//! the manager exists.
 //------------------------------------------------------------------------------------------------
 modded class SCR_MapMarkersUI
 {
@@ -108,6 +110,7 @@ modded class SCR_MapMarkersUI
 		if (!mapFrame)
 			return;
 
+		mapFrame.SetFlags(WidgetFlags.CLIPCHILDREN);
 		Widget child = mapFrame.GetChildren();
 		while (child)
 		{
@@ -124,7 +127,8 @@ modded class SCR_MapMarkersUI
 		if (!w)
 			return;
 
-		w.SetFlags(WidgetFlags.IGNORE_CURSOR);
+		w.SetFlags(WidgetFlags.IGNORE_CURSOR | WidgetFlags.INHERIT_CLIPPING);
+		w.ClearFlags(WidgetFlags.DO_NOT_CLIP_RECT);
 		Widget child = w.GetChildren();
 		while (child)
 		{

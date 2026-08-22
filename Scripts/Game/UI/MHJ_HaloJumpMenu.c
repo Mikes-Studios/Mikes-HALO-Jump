@@ -3,9 +3,13 @@
 //! chimeraMenus.conf (MenuManager never loads addon presets there).
 //! Native MapWidget is owned by MHJ_MapHost (planner session) and framed over the picker slot.
 //! Named drop sites come from MHJ_DropSiteCatalog (I&A fills it). Empty catalog hides the list.
+//! Root z-order is above HUD ALWAYS_TOP (100) so Role Selection / Role Switcher
+//! stay behind this overlay.
 //------------------------------------------------------------------------------------------------
 class MHJ_HaloJumpMenu
 {
+	protected static const int MENU_Z = 110;
+
 	protected static ref MHJ_HaloJumpMenu s_Instance;
 
 	protected Widget m_wRoot;
@@ -80,10 +84,11 @@ class MHJ_HaloJumpMenu
 			return false;
 		}
 
-		m_wRoot = workspace.CreateWidget(WidgetType.FrameWidgetTypeID, WidgetFlags.VISIBLE, Color.FromInt(Color.WHITE), 80, workspace);
+		m_wRoot = workspace.CreateWidget(WidgetType.FrameWidgetTypeID, WidgetFlags.VISIBLE, Color.FromInt(Color.WHITE), MENU_Z, workspace);
 		if (!m_wRoot)
 			return false;
 
+		m_wRoot.SetZOrder(MENU_Z);
 		FrameSlot.SetAnchorMin(m_wRoot, 0, 0);
 		FrameSlot.SetAnchorMax(m_wRoot, 1, 1);
 		FrameSlot.SetOffsets(m_wRoot, 0, 0, 0, 0);
@@ -180,6 +185,8 @@ class MHJ_HaloJumpMenu
 	//------------------------------------------------------------------------------------------------
 	protected void TickQueued()
 	{
+		if (m_wRoot)
+			m_wRoot.SetZOrder(MENU_Z);
 		if (m_Host)
 			m_Host.Tick(System.GetFrameTimeS());
 		if (m_Map)

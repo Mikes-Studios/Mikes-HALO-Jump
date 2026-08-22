@@ -2,10 +2,13 @@
 //! Task icons on the HALO planner. Spawn points stay off. UIIconsContainer is
 //! required by vanilla OnMapOpen (NPE if missing). Copy the game mode's gadget
 //! map task layout so Conflict vs vanilla icons match the paper map.
+//! Planner icons clip to the map widget — vanilla never clips because the paper
+//! map is fullscreen.
 //!
 //! Consumer: loaded with the addon. Do not instantiate.
 //!
-//! Extend: keep the planner spawn-point skip, null-check, and gadget layout copy.
+//! Extend: keep the planner spawn-point skip, null-check, gadget layout copy,
+//! and map-widget clip.
 //------------------------------------------------------------------------------------------------
 modded class SCR_MapUIElementContainer
 {
@@ -31,8 +34,9 @@ modded class SCR_MapUIElementContainer
 			return;
 		}
 
-		icons.SetFlags(WidgetFlags.IGNORE_CURSOR);
+		icons.SetFlags(WidgetFlags.IGNORE_CURSOR | WidgetFlags.CLIPCHILDREN);
 		super.OnMapOpen(config);
+		MHJ_ClipIconsContainer();
 		MHJ_IgnoreCursorTree(m_wIconsContainer);
 	}
 
@@ -62,7 +66,18 @@ modded class SCR_MapUIElementContainer
 		if (!MHJ_HaloJumpMenu.IsOpen())
 			return;
 
+		MHJ_ClipIconsContainer();
 		MHJ_IgnoreCursorTree(m_wIconsContainer);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	override void UpdateIconPosition(Widget widget, SCR_MapUIElement icon, float x, float y)
+	{
+		super.UpdateIconPosition(widget, icon, x, y);
+		if (!MHJ_HaloJumpMenu.IsOpen())
+			return;
+
+		MHJ_HideIconOutsideMap(widget, x, y);
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -112,12 +127,60 @@ modded class SCR_MapUIElementContainer
 	}
 
 	//------------------------------------------------------------------------------------------------
+	protected void MHJ_ClipIconsContainer()
+	{
+		if (!m_wIconsContainer)
+			return;
+
+		m_wIconsContainer.SetFlags(WidgetFlags.CLIPCHILDREN | WidgetFlags.IGNORE_CURSOR);
+		m_wIconsContainer.ClearFlags(WidgetFlags.DO_NOT_CLIP_RECT);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void MHJ_HideIconOutsideMap(Widget widget, float x, float y)
+	{
+		if (!widget)
+			return;
+		if (!m_wIconsContainer)
+			return;
+
+		float sw;
+		float sh;
+		m_wIconsContainer.GetScreenSize(sw, sh);
+		WorkspaceWidget workspace = GetGame().GetWorkspace();
+		if (workspace)
+		{
+			sw = workspace.DPIUnscale(sw);
+			sh = workspace.DPIUnscale(sh);
+		}
+
+		if (sw < 8)
+			return;
+		if (sh < 8)
+			return;
+
+		float pad = 40;
+		bool inside = true;
+		if (x < -pad)
+			inside = false;
+		else if (y < -pad)
+			inside = false;
+		else if (x > sw + pad)
+			inside = false;
+		else if (y > sh + pad)
+			inside = false;
+
+		widget.SetVisible(inside);
+	}
+
+	//------------------------------------------------------------------------------------------------
 	protected void MHJ_IgnoreCursorTree(Widget w)
 	{
 		if (!w)
 			return;
 
-		w.SetFlags(WidgetFlags.IGNORE_CURSOR);
+		w.SetFlags(WidgetFlags.IGNORE_CURSOR | WidgetFlags.INHERIT_CLIPPING);
+		w.ClearFlags(WidgetFlags.DO_NOT_CLIP_RECT);
 		Widget child = w.GetChildren();
 		while (child)
 		{
