@@ -146,7 +146,7 @@ class MHJ_Constants
 	static const string CANOPY_MAT_LINE = "{31106DE7805868A1}Assets/ParachuteMK3/Data/Line.emat";
 	static const string CANOPY_MESH_REMAP = "$remap 'Chute' '{85583F983D5A2BA8}Assets/ParachuteMK3/Data/Chute.emat'; $remap 'Line' '{31106DE7805868A1}Assets/ParachuteMK3/Data/Line.emat'; $remap '01__Default' '{17C975C41F8929BD}Assets/ParachuteMK3/Data/01__Default.emat'";
 	static const float AI_DROP_AGL = 380;
-	static const int AI_DROP_MAX = 50;
+	static const int AI_DROP_MAX = 40;
 	//! Applied only to the AI origin step. Do not write these back into m_vVel.
 	static const float AI_CANOPY_SPEED_SCALE = 0.5;
 	static const float AI_CANOPY_SINK_SCALE = 2;
