@@ -31,6 +31,7 @@ class MHJ_AiDropAutopilot
 		float pathRad = MHJ_Constants.CANOPY_PATH_CRUISE * Math.DEG2RAD;
 		slot.m_vVel = forward * (MHJ_Constants.CANOPY_CRUISE_TAS * Math.Cos(-pathRad));
 		slot.m_vVel[1] = -MHJ_Constants.CANOPY_MAX_SINK;
+		ApplyAiSpeed(slot);
 		slot.m_vWind = MHJ_FlightAero.WindWorld(slot.m_vOrigin[1], 0);
 	}
 
@@ -162,6 +163,27 @@ class MHJ_AiDropAutopilot
 		float speed = slot.m_vVel.Length();
 		if (speed > MHJ_Constants.CANOPY_MAX_TAS)
 			slot.m_vVel = slot.m_vVel * (MHJ_Constants.CANOPY_MAX_TAS / speed);
+
+		ApplyAiSpeed(slot);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! Shared polar still writes player cruise/sink. Scale after that write so
+	//! CoastBleed cannot restore full TAS on the next line.
+	protected static void ApplyAiSpeed(notnull MHJ_AiDropSlot slot)
+	{
+		slot.m_vVel[0] = slot.m_vVel[0] * MHJ_Constants.AI_CANOPY_SPEED_SCALE;
+		slot.m_vVel[2] = slot.m_vVel[2] * MHJ_Constants.AI_CANOPY_SPEED_SCALE;
+
+		float sink = slot.m_vVel[1];
+		if (sink < 0)
+			sink = sink * MHJ_Constants.AI_CANOPY_SINK_SCALE;
+
+		float maxSink = -MHJ_Constants.CANOPY_MAX_SINK * MHJ_Constants.AI_CANOPY_SINK_SCALE;
+		if (sink < maxSink)
+			sink = maxSink;
+
+		slot.m_vVel[1] = sink;
 	}
 
 	//------------------------------------------------------------------------------------------------
