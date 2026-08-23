@@ -1,7 +1,8 @@
 //------------------------------------------------------------------------------------------------
 //! HALO drop planner. Hosted on the workspace so Workbench Play does not need
 //! chimeraMenus.conf (MenuManager never loads addon presets there).
-//! Native MapWidget is owned by MHJ_MapHost (planner session) and framed over the picker slot.
+//! Left options rail + right-pane picker. Native MapWidget is owned by MHJ_MapHost
+//! and framed over the picker slot so click-to-drop covers the full right pane.
 //! Named drop sites come from MHJ_DropSiteCatalog (I&A fills it). Empty catalog hides the list.
 //! Root z-order is above HUD ALWAYS_TOP (100) so Role Selection / Role Switcher
 //! stay behind this overlay.
@@ -202,17 +203,24 @@ class MHJ_HaloJumpMenu
 
 		ref MUI_FxBackdrop fx = runtime.CreateFxBackdrop("fx");
 
+		ref MUI_Row split = runtime.CreateRow("split");
+		split.SetFillWidth();
+		split.SetFillHeight();
+		split.SetGap(16);
+		split.SetPadding(20);
+		split.SetIntro(0.06, 0.55, 46);
+
 		ref MUI_Card card = runtime.CreateCard("card");
-		card.SetWidth(680);
+		card.SetWidth(440);
+		card.SetFillHeight();
 		card.SetPadding(28);
 		card.SetPaddingTRBL(22, 28, 24, 28);
 		card.SetGap(12);
-		card.SetAlign(0.5, 0.5);
-		card.SetIntro(0.06, 0.55, 46);
+		card.SetIntro(0.16, 0.4, 18);
 
 		ref MUI_LiveHeader liveHeader = runtime.CreateLiveHeader("HALO JUMP", "liveHeader");
 		liveHeader.SetKicker("MIKE'S HALO  //  DROP PLANNER");
-		liveHeader.SetIntro(0.16, 0.4, 18);
+		liveHeader.SetIntro(0.22, 0.4, 18);
 
 		ref MUI_Label subtitle = runtime.CreateLabel("Pick a drop site or click the map. Drag pans, wheel zooms. Controller: D-pad the list, A selects, stick pans, triggers zoom.", "subtitle");
 		subtitle.SetFontSize(MUI_Theme.FONT_SMALL);
@@ -236,10 +244,10 @@ class MHJ_HaloJumpMenu
 			m_SitesList.SetGap(6);
 			int siteCount = m_aSites.Count();
 			float listH = siteCount * 50;
-			if (listH > 156)
-				listH = 156;
-			if (listH < 50)
-				listH = 50;
+			if (listH > 360)
+				listH = 360;
+			if (listH < 80)
+				listH = 80;
 			m_SitesList.SetViewportHeight(listH);
 			BuildSiteButtons(runtime);
 		}
@@ -249,11 +257,9 @@ class MHJ_HaloJumpMenu
 		m_Picker.SetName("picker");
 		m_Picker.InitWorld();
 		m_Picker.GetOnChanged().Insert(OnPickerChanged);
-		if (m_SitesList)
-		{
-			m_Picker.SetHeight(340);
-			m_Picker.SetMinHeight(340);
-		}
+		m_Picker.SetFillWidth();
+		m_Picker.SetFillHeight();
+		m_Picker.SetGrow(1);
 
 		m_CoordLabel = runtime.CreateLabel("", "coords");
 		m_CoordLabel.SetFontSize(MUI_Theme.FONT_SMALL);
@@ -299,16 +305,22 @@ class MHJ_HaloJumpMenu
 			card.AddChild(m_SitesLabel);
 		if (m_SitesList)
 			card.AddChild(m_SitesList);
-		card.AddChild(m_Picker);
 		card.AddChild(m_CoordLabel);
 		card.AddChild(m_JumpAlt);
 		card.AddChild(m_OpenAlt);
 		card.AddChild(m_Status);
+		ref MUI_Spacer railGrow = runtime.CreateSpacer(0, "railGrow");
+		railGrow.SetFillHeight();
+		railGrow.SetGrow(1);
+		card.AddChild(railGrow);
 		card.AddChild(lineB);
 		card.AddChild(buttons);
 
+		split.AddChild(card);
+		split.AddChild(m_Picker);
+
 		overlay.AddChild(fx);
-		overlay.AddChild(card);
+		overlay.AddChild(split);
 		runtime.SetRoot(overlay);
 
 		if (m_aSites && m_aSites.Count() > 0)
