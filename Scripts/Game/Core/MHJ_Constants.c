@@ -103,9 +103,12 @@ class MHJ_Constants
 	static const float CANOPY_RELEASE_BLEED = 0.16;
 	static const float CANOPY_HANG_LENGTH = 4.2;
 	static const float CANOPY_HANG_INERTIA = 0.42;
-	//! Standing pawn origin is feet. Sit-slot Y is 1.474; add ~1.6 m so the
-	//! chute sits on the torso instead of a meter above the head.
-	static const float CANOPY_AI_VISUAL_Y = 3.1;
+	//! World-up metres from the standing pawn's feet to the ParachuteMK3.xob
+	//! origin. That origin is the craft / harness, not the fabric — the player
+	//! sit slot is +1.474 above it, and the canopy is several metres above
+	//! that. Positive pushes the fabric farther from the AI. Negative puts
+	//! the AI into the harness. -1.474 parks feet on the sit slot.
+	static const float CANOPY_AI_VISUAL_Y = -1.474;
 	static const float CANOPY_STRETCH_TIME = 0.32;
 	static const float CANOPY_INFLATE_TIME = 1.05;
 	static const float CANOPY_OPEN_TIME = 2.4;

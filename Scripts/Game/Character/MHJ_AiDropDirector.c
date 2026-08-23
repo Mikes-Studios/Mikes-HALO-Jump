@@ -20,6 +20,7 @@ class MHJ_AiDropDirector : GenericEntity
 	protected ref array<IEntity> m_aVisuals;
 	protected ref ScriptInvoker m_OnJumperFinished;
 	protected bool m_bClosing;
+	protected static bool s_bLoggedVisualY;
 
 	//------------------------------------------------------------------------------------------------
 	void MHJ_AiDropDirector(IEntitySource src, IEntity parent)
@@ -583,10 +584,15 @@ class MHJ_AiDropDirector : GenericEntity
 		vector mat[4];
 		jumper.GetWorldTransform(mat);
 		vector origin = mat[3];
-		origin = origin + mat[1] * MHJ_Constants.CANOPY_AI_VISUAL_Y;
+		origin[1] = origin[1] + MHJ_Constants.CANOPY_AI_VISUAL_Y;
 		mat[3] = origin;
 		visual.SetWorldTransform(mat);
 		visual.Update();
+
+		if (s_bLoggedVisualY)
+			return;
+		s_bLoggedVisualY = true;
+		MHJ_Log.Info("AI canopy visual Y=" + MHJ_Constants.CANOPY_AI_VISUAL_Y.ToString());
 	}
 
 	//------------------------------------------------------------------------------------------------
