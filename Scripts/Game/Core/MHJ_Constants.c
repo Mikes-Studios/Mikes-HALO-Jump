@@ -69,8 +69,9 @@ class MHJ_Constants
 	//! so PerceivableComponent.IsInCompartment() cannot stick after the craft dies.
 	static const int CANOPY_EXIT_POLL_MS = 50;
 	static const int CANOPY_EXIT_MAX_TRIES = 40;
-	static const float CANOPY_CL_TRIM = 0.55;
-	static const float CANOPY_CD_TRIM = 0.15;
+	//! Hands-off polar. 0.55 / 0.15 flew too flat and hung at ~3.4 m/s sink.
+	static const float CANOPY_CL_TRIM = 0.42;
+	static const float CANOPY_CD_TRIM = 0.17;
 	static const float CANOPY_CL_DIVE_DROP = 0.50;
 	static const float CANOPY_CL_BRAKE_ADD = 0.48;
 	static const float CANOPY_CD_DIVE_ADD = -0.12;
@@ -84,13 +85,13 @@ class MHJ_Constants
 	static const float CANOPY_HEADING_LERP = 2.5;
 	static const float CANOPY_BANK_MAX = 32;
 	static const float CANOPY_BANK_INERTIA = 0.38;
-	static const float CANOPY_PITCH_CRUISE = 0;
+	static const float CANOPY_PITCH_CRUISE = -24;
 	static const float CANOPY_PITCH_DIVE = -85;
 	static const float CANOPY_PITCH_FLARE = 16;
 	static const float CANOPY_PITCH_SNATCH = 0;
 	static const float CANOPY_PITCH_INERTIA = 0.45;
 	//! Path angles must match visual pitch in cruise/dive so the wing flies where it points.
-	static const float CANOPY_PATH_CRUISE = -18;
+	static const float CANOPY_PATH_CRUISE = -24;
 	static const float CANOPY_PATH_DIVE = -85;
 	static const float CANOPY_PATH_FLARE = -2;
 	static const float CANOPY_PATH_ALIGN = 2.4;

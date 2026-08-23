@@ -117,9 +117,10 @@ class MHJ_FlightAero
 	}
 
 	//------------------------------------------------------------------------------------------------
-	//! Ram-air polar. Hands-off is a gliding wing. W / a tucked path lowers Cl so
-	//! equilibrium TAS rises. S adds Cl. Extra Cl when fast + braked holds the swoop.
-	//! High TAS with hands off keeps a lower Cd so dive energy coasts instead of dying.
+	//! Ram-air polar. Hands-off is a descending glide, not a hang. W / a tucked
+	//! path lowers Cl so equilibrium TAS rises. S adds Cl. Extra Cl when fast +
+	//! braked holds the swoop. High TAS with hands off keeps a lower Cd so dive
+	//! energy coasts instead of dying.
 	static void CanopyCoeff(float dive, float brake, float tas, float pathDive, out float cl, out float cd)
 	{
 		float polarDive = dive;
