@@ -552,9 +552,29 @@ class MHJ_AiDropDirector : GenericEntity
 		if (!visual)
 			return null;
 
-		visual.SetObject(mesh, MHJ_Constants.CANOPY_MESH_REMAP);
+		visual.SetObject(mesh, BuildVisibleCanopyRemap(mesh));
 		visual.SetFlags(EntityFlags.VISIBLE, true);
 		return visual;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! The raw xob only has Chute/Line. 01__Default is a prefab MeshObject slot
+	//! on MHJ_DeployedCanopy, not a source material on the mesh. Remapping it
+	//! here is `Source material do not exist`.
+	protected static string BuildVisibleCanopyRemap(notnull VObject mesh)
+	{
+		string remap;
+		string materials[256];
+		int numMats = mesh.GetMaterials(materials);
+		int i;
+		for (i = 0; i < numMats; i++)
+		{
+			if (materials[i] == "Chute")
+				remap = remap + "$remap 'Chute' '" + MHJ_Constants.CANOPY_MAT_CHUTE + "'; ";
+			else if (materials[i] == "Line")
+				remap = remap + "$remap 'Line' '" + MHJ_Constants.CANOPY_MAT_LINE + "'; ";
+		}
+		return remap;
 	}
 
 	//------------------------------------------------------------------------------------------------
