@@ -15,4 +15,30 @@ modded class SCR_BaseGameMode
 		MHJ_JumpHud.Close();
 		super.OnGameEnd();
 	}
+
+	//------------------------------------------------------------------------------------------------
+	void MHJ_RelayAiDropAdd(RplId jumperId)
+	{
+		Rpc(RpcDo_MHJ_AiDropAdd, jumperId);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	void MHJ_RelayAiDropRemove(RplId jumperId)
+	{
+		Rpc(RpcDo_MHJ_AiDropRemove, jumperId);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	[RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
+	protected void RpcDo_MHJ_AiDropAdd(RplId jumperId)
+	{
+		MHJ_AiDropDirector.ClientAddRemote(jumperId);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	[RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
+	protected void RpcDo_MHJ_AiDropRemove(RplId jumperId)
+	{
+		MHJ_AiDropDirector.ClientRemoveRemote(jumperId);
+	}
 }

@@ -1,22 +1,39 @@
 //------------------------------------------------------------------------------------------------
-//! Server-authoritative AI drop stick. One replicated entity drives every jumper
-//! with autopilot. Clients spawn local-only canopy meshes from replicated RplIds.
+//! Server-authoritative AI drop stick. One script-spawned entity drives every
+//! jumper with autopilot. Clients spawn local-only canopy meshes from jumper
+//! RplIds. Do not use a hand-authored prefab GUID — Workbench never registered
+//! those, so RPL insert failed and the visual remaps died.
 //------------------------------------------------------------------------------------------------
-[ComponentEditorProps(category: "MHJ", description: "AI canopy drop director. One stick, many jumpers.")]
-class MHJ_AiDropDirectorClass : ScriptComponentClass
+class MHJ_AiDropDirectorClass : GenericEntityClass
 {
 }
 
-class MHJ_AiDropDirector : ScriptComponent
+class MHJ_AiDropDirector : GenericEntity
 {
 	protected static MHJ_AiDropDirector s_Live;
+	protected static ref array<RplId> s_aRemoteIds;
+	protected static ref array<IEntity> s_aRemoteVisuals;
+	protected static bool s_bRemoteTick;
 
-	protected RplComponent m_Rpl;
 	protected ref array<ref MHJ_AiDropSlot> m_aSlots;
 	protected ref array<RplId> m_aClientIds;
 	protected ref array<IEntity> m_aVisuals;
 	protected ref ScriptInvoker m_OnJumperFinished;
 	protected bool m_bClosing;
+
+	//------------------------------------------------------------------------------------------------
+	void MHJ_AiDropDirector(IEntitySource src, IEntity parent)
+	{
+		SetEventMask(EntityEvent.INIT | EntityEvent.FRAME);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	void ~MHJ_AiDropDirector(IEntitySource src, IEntity parent)
+	{
+		ClearClientVisuals();
+		if (s_Live == this)
+			s_Live = null;
+	}
 
 	//------------------------------------------------------------------------------------------------
 	static MHJ_AiDropDirector GetLive()
@@ -51,27 +68,17 @@ class MHJ_AiDropDirector : ScriptComponent
 			return null;
 		}
 
-		Resource resource = Resource.Load(MHJ_Constants.AI_DROP_STICK_PREFAB);
-		if (!resource || !resource.IsValid())
-		{
-			MHJ_Log.Error("AI drop stick prefab missing");
+		BaseWorld world = GetGame().GetWorld();
+		if (!world)
 			return null;
-		}
 
 		ref EntitySpawnParams spawnParams = new EntitySpawnParams();
 		spawnParams.TransformMode = ETransformMode.WORLD;
 		spawnParams.Transform[3] = lz;
 
-		IEntity stick = GetGame().SpawnEntityPrefab(resource, GetGame().GetWorld(), spawnParams);
-		if (!stick)
-			return null;
-
-		MHJ_AiDropDirector director = MHJ_AiDropDirector.Cast(stick.FindComponent(MHJ_AiDropDirector));
+		MHJ_AiDropDirector director = MHJ_AiDropDirector.Cast(GetGame().SpawnEntity(MHJ_AiDropDirector, world, spawnParams));
 		if (!director)
-		{
-			SCR_EntityHelper.DeleteEntityAndChildren(stick);
 			return null;
-		}
 
 		s_Live = director;
 		MHJ_Log.Info("AI drop stick spawned at " + lz.ToString());
@@ -87,81 +94,23 @@ class MHJ_AiDropDirector : ScriptComponent
 	}
 
 	//------------------------------------------------------------------------------------------------
-	override void OnPostInit(IEntity owner)
+	override void EOnInit(IEntity owner)
 	{
-		super.OnPostInit(owner);
 		if (SCR_Global.IsEditMode())
 			return;
 
-		m_Rpl = RplComponent.Cast(owner.FindComponent(RplComponent));
 		m_aSlots = new array<ref MHJ_AiDropSlot>();
 		m_aClientIds = new array<RplId>();
 		m_aVisuals = new array<IEntity>();
-		SetEventMask(owner, EntityEvent.FRAME | EntityEvent.SIMULATE);
 
-		if (IsAuthority())
+		if (Replication.IsServer())
 			s_Live = this;
-	}
-
-	//------------------------------------------------------------------------------------------------
-	override void OnDelete(IEntity owner)
-	{
-		ClearClientVisuals();
-		if (s_Live == this)
-			s_Live = null;
-		super.OnDelete(owner);
-	}
-
-	//------------------------------------------------------------------------------------------------
-	override bool RplSave(ScriptBitWriter writer)
-	{
-		int count = m_aSlots.Count();
-		int active = 0;
-		int i;
-		for (i = 0; i < count; i++)
-		{
-			MHJ_AiDropSlot slot = m_aSlots[i];
-			if (slot && slot.m_bActive && slot.m_JumperId.IsValid())
-				active = active + 1;
-		}
-
-		writer.WriteInt(active);
-		for (i = 0; i < count; i++)
-		{
-			MHJ_AiDropSlot slot = m_aSlots[i];
-			if (!slot || !slot.m_bActive || !slot.m_JumperId.IsValid())
-				continue;
-			writer.WriteRplId(slot.m_JumperId);
-		}
-
-		return true;
-	}
-
-	//------------------------------------------------------------------------------------------------
-	override bool RplLoad(ScriptBitReader reader)
-	{
-		int count;
-		reader.ReadInt(count);
-		if (count < 0)
-			count = 0;
-		if (count > MHJ_Constants.AI_DROP_MAX)
-			count = MHJ_Constants.AI_DROP_MAX;
-
-		int i;
-		for (i = 0; i < count; i++)
-		{
-			RplId jumperId;
-			reader.ReadRplId(jumperId);
-			AddClientId(jumperId);
-		}
-
-		return true;
 	}
 
 	//------------------------------------------------------------------------------------------------
 	bool AddJumper(notnull ChimeraCharacter jumper, vector lz)
 	{
-		if (!IsAuthority())
+		if (!Replication.IsServer())
 			return false;
 		if (ActiveSlotCount() >= MHJ_Constants.AI_DROP_MAX)
 		{
@@ -191,7 +140,7 @@ class MHJ_AiDropDirector : ScriptComponent
 		PrepareJumper(jumper);
 		m_aSlots.Insert(slot);
 		AddClientId(jumperId);
-		Rpc(RpcDo_MHJ_AiDropAdd, jumperId);
+		RelayAdd(jumperId);
 		MHJ_Log.Info("AI drop jumper added id=" + jumperId.ToString());
 		return true;
 	}
@@ -238,10 +187,16 @@ class MHJ_AiDropDirector : ScriptComponent
 	}
 
 	//------------------------------------------------------------------------------------------------
-	override void EOnSimulate(IEntity owner, float timeSlice)
+	override void EOnFrame(IEntity owner, float timeSlice)
 	{
-		if (!IsAuthority())
-			return;
+		if (Replication.IsServer())
+			TickAuthority(timeSlice);
+		TickClientVisuals();
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void TickAuthority(float timeSlice)
+	{
 		if (!m_aSlots)
 			return;
 
@@ -257,12 +212,6 @@ class MHJ_AiDropDirector : ScriptComponent
 
 		if (!m_bClosing && ActiveSlotCount() <= 0 && count > 0)
 			BeginClose();
-	}
-
-	//------------------------------------------------------------------------------------------------
-	override void EOnFrame(IEntity owner, float timeSlice)
-	{
-		TickClientVisuals();
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -334,6 +283,7 @@ class MHJ_AiDropDirector : ScriptComponent
 			RestoreJumper(jumper, true);
 		}
 
+		MHJ_Log.Info("AI drop landed id=" + slot.m_JumperId.ToString());
 		FinishSlot(slot, jumper);
 	}
 
@@ -374,7 +324,7 @@ class MHJ_AiDropDirector : ScriptComponent
 		slot.m_bActive = false;
 		RplId jumperId = slot.m_JumperId;
 		RemoveClientId(jumperId);
-		Rpc(RpcDo_MHJ_AiDropRemove, jumperId);
+		RelayRemove(jumperId);
 
 		if (m_OnJumperFinished && jumper)
 			m_OnJumperFinished.Invoke(jumper);
@@ -392,28 +342,29 @@ class MHJ_AiDropDirector : ScriptComponent
 	//------------------------------------------------------------------------------------------------
 	protected void DeleteStick()
 	{
-		if (!IsAuthority())
+		if (!Replication.IsServer())
 			return;
 		if (s_Live == this)
 			s_Live = null;
 
-		IEntity owner = GetOwner();
-		if (owner)
-			RplComponent.DeleteRplEntity(owner, false);
+		ClearClientVisuals();
+		SCR_EntityHelper.DeleteEntityAndChildren(this);
 	}
 
 	//------------------------------------------------------------------------------------------------
-	[RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
-	protected void RpcDo_MHJ_AiDropAdd(RplId jumperId)
+	protected void RelayAdd(RplId jumperId)
 	{
-		AddClientId(jumperId);
+		SCR_BaseGameMode gameMode = SCR_BaseGameMode.Cast(GetGame().GetGameMode());
+		if (gameMode)
+			gameMode.MHJ_RelayAiDropAdd(jumperId);
 	}
 
 	//------------------------------------------------------------------------------------------------
-	[RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
-	protected void RpcDo_MHJ_AiDropRemove(RplId jumperId)
+	protected void RelayRemove(RplId jumperId)
 	{
-		RemoveClientId(jumperId);
+		SCR_BaseGameMode gameMode = SCR_BaseGameMode.Cast(GetGame().GetGameMode());
+		if (gameMode)
+			gameMode.MHJ_RelayAiDropRemove(jumperId);
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -466,27 +417,108 @@ class MHJ_AiDropDirector : ScriptComponent
 	//------------------------------------------------------------------------------------------------
 	protected void TickClientVisuals()
 	{
-		if (Replication.IsServer() && !GetGame().GetPlayerController())
-			return;
-		if (!m_aClientIds)
-			return;
+		DriveVisualList(m_aClientIds, m_aVisuals);
+	}
 
-		int count = m_aClientIds.Count();
+	//------------------------------------------------------------------------------------------------
+	static void ClientAddRemote(RplId jumperId)
+	{
+		if (!jumperId.IsValid())
+			return;
+		if (s_Live)
+			return;
+		if (!s_aRemoteIds)
+			s_aRemoteIds = new array<RplId>();
+		if (!s_aRemoteVisuals)
+			s_aRemoteVisuals = new array<IEntity>();
+
+		int count = s_aRemoteIds.Count();
 		int i;
 		for (i = 0; i < count; i++)
 		{
-			IEntity jumper = ResolveJumper(m_aClientIds[i]);
+			if (s_aRemoteIds[i] == jumperId)
+				return;
+		}
+
+		s_aRemoteIds.Insert(jumperId);
+		s_aRemoteVisuals.Insert(null);
+		if (s_bRemoteTick)
+			return;
+
+		s_bRemoteTick = true;
+		GetGame().GetCallqueue().CallLater(TickRemoteVisuals, 0, true);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	static void ClientRemoveRemote(RplId jumperId)
+	{
+		if (!s_aRemoteIds)
+			return;
+
+		int count = s_aRemoteIds.Count();
+		int i;
+		int index = -1;
+		for (i = 0; i < count; i++)
+		{
+			if (s_aRemoteIds[i] == jumperId)
+			{
+				index = i;
+				break;
+			}
+		}
+		if (index < 0)
+			return;
+
+		if (s_aRemoteVisuals && index < s_aRemoteVisuals.Count())
+		{
+			IEntity visual = s_aRemoteVisuals[index];
+			if (visual)
+				SCR_EntityHelper.DeleteEntityAndChildren(visual);
+			s_aRemoteVisuals.Remove(index);
+		}
+		s_aRemoteIds.Remove(index);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected static void TickRemoteVisuals()
+	{
+		if (s_Live)
+			return;
+		if (!s_aRemoteIds || s_aRemoteIds.IsEmpty())
+		{
+			if (s_bRemoteTick)
+			{
+				GetGame().GetCallqueue().Remove(TickRemoteVisuals);
+				s_bRemoteTick = false;
+			}
+			return;
+		}
+
+		DriveVisualList(s_aRemoteIds, s_aRemoteVisuals);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected static void DriveVisualList(array<RplId> ids, array<IEntity> visuals)
+	{
+		if (!ids)
+			return;
+
+		int count = ids.Count();
+		int i;
+		for (i = 0; i < count; i++)
+		{
+			IEntity jumper = ResolveJumper(ids[i]);
 			if (!jumper)
 				continue;
 
 			IEntity visual = null;
-			if (m_aVisuals && i < m_aVisuals.Count())
-				visual = m_aVisuals[i];
+			if (visuals && i < visuals.Count())
+				visual = visuals[i];
 			if (!visual)
 			{
 				visual = SpawnVisual();
-				if (m_aVisuals && i < m_aVisuals.Count())
-					m_aVisuals[i] = visual;
+				if (visuals && i < visuals.Count())
+					visuals[i] = visual;
 			}
 			if (!visual)
 				continue;
@@ -496,19 +528,37 @@ class MHJ_AiDropDirector : ScriptComponent
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected IEntity SpawnVisual()
+	protected static IEntity SpawnVisual()
 	{
-		Resource resource = Resource.Load(MHJ_Constants.AI_CANOPY_VISUAL_PREFAB);
+		Resource resource = Resource.Load(MHJ_Constants.CANOPY_MESH);
 		if (!resource || !resource.IsValid())
+			return null;
+
+		BaseResourceObject baseResource = resource.GetResource();
+		if (!baseResource)
+			return null;
+
+		VObject mesh = baseResource.ToVObject();
+		if (!mesh)
+			return null;
+
+		BaseWorld world = GetGame().GetWorld();
+		if (!world)
 			return null;
 
 		ref EntitySpawnParams spawnParams = new EntitySpawnParams();
 		spawnParams.TransformMode = ETransformMode.WORLD;
-		return GetGame().SpawnEntityPrefabLocal(resource, GetGame().GetWorld(), spawnParams);
+		IEntity visual = GetGame().SpawnEntity(GenericEntity, world, spawnParams);
+		if (!visual)
+			return null;
+
+		visual.SetObject(mesh, MHJ_Constants.CANOPY_MESH_REMAP);
+		visual.SetFlags(EntityFlags.VISIBLE, true);
+		return visual;
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected void DriveVisual(notnull IEntity visual, notnull IEntity jumper)
+	protected static void DriveVisual(notnull IEntity visual, notnull IEntity jumper)
 	{
 		vector mat[4];
 		jumper.GetWorldTransform(mat);
@@ -520,7 +570,7 @@ class MHJ_AiDropDirector : ScriptComponent
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected IEntity ResolveJumper(RplId jumperId)
+	protected static IEntity ResolveJumper(RplId jumperId)
 	{
 		if (!jumperId.IsValid())
 			return null;
@@ -558,13 +608,5 @@ class MHJ_AiDropDirector : ScriptComponent
 		for (i = 0; i < count; i++)
 			DestroyVisualAt(i);
 		m_aVisuals.Clear();
-	}
-
-	//------------------------------------------------------------------------------------------------
-	protected bool IsAuthority()
-	{
-		if (!m_Rpl)
-			return Replication.IsServer();
-		return m_Rpl.Role() == RplRole.Authority;
 	}
 }

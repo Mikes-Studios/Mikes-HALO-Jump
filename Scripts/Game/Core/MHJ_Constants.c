@@ -137,9 +137,8 @@ class MHJ_Constants
 	static const float WORLD_SIZE_FALLBACK = 12800;
 
 	static const string CANOPY_PREFAB = "{C4E8A27B1F906D90}Prefabs/MHJ_DeployedCanopy.et";
+	static const string CANOPY_MESH = "{A372F4DA63729C28}Assets/ParachuteMK3/ParachuteMK3.xob";
 	static const string CANOPY_MESH_REMAP = "$remap 'Chute' '{85583F983D5A2BA8}Assets/ParachuteMK3/Data/Chute.emat'; $remap 'Line' '{31106DE7805868A1}Assets/ParachuteMK3/Data/Line.emat'; $remap '01__Default' '{17C975C41F8929BD}Assets/ParachuteMK3/Data/01__Default.emat'";
-	static const string AI_DROP_STICK_PREFAB = "{C4E8A27B1F906E01}Prefabs/MHJ_AiDropStick.et";
-	static const string AI_CANOPY_VISUAL_PREFAB = "{C4E8A27B1F906E02}Prefabs/MHJ_AiCanopyVisual.et";
 	static const float AI_DROP_AGL = 380;
 	static const int AI_DROP_MAX = 24;
 	static const string SLOT_FREEFALL = "freefall";
