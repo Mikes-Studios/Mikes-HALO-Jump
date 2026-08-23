@@ -583,7 +583,7 @@ class MHJ_AiDropDirector : GenericEntity
 		vector mat[4];
 		jumper.GetWorldTransform(mat);
 		vector origin = mat[3];
-		origin = origin + mat[1] * MHJ_Constants.CANOPY_SEAT_Y;
+		origin = origin + mat[1] * MHJ_Constants.CANOPY_AI_VISUAL_Y;
 		mat[3] = origin;
 		visual.SetWorldTransform(mat);
 		visual.Update();

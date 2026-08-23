@@ -103,9 +103,9 @@ class MHJ_Constants
 	static const float CANOPY_RELEASE_BLEED = 0.16;
 	static const float CANOPY_HANG_LENGTH = 4.2;
 	static const float CANOPY_HANG_INERTIA = 0.42;
-	//! Sit-slot PassengerPositionInfo Y on MHJ_DeployedCanopy. AI chute visuals
-	//! use this so a standing pawn hangs as close as the seated player.
-	static const float CANOPY_SEAT_Y = 1.474;
+	//! Standing pawn origin is feet. Sit-slot Y is 1.474; add ~1.6 m so the
+	//! chute sits on the torso instead of a meter above the head.
+	static const float CANOPY_AI_VISUAL_Y = 3.1;
 	static const float CANOPY_STRETCH_TIME = 0.32;
 	static const float CANOPY_INFLATE_TIME = 1.05;
 	static const float CANOPY_OPEN_TIME = 2.4;
