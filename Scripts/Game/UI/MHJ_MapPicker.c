@@ -26,9 +26,7 @@ class MHJ_MapPicker : MUI_Node
 	{
 		m_OnChanged = new ScriptInvoker();
 		m_Style.m_WidthMode = MUI_SizeMode.Fill;
-		m_Style.m_HeightMode = MUI_SizeMode.Exact;
-		m_Style.m_fHeight = 400;
-		m_Style.m_fMinHeight = 400;
+		m_Style.m_HeightMode = MUI_SizeMode.Fill;
 		m_Style.m_fRadius = 10;
 		m_Style.m_bInteractive = true;
 		m_Style.m_bClipChildren = true;

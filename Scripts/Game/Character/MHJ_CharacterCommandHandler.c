@@ -57,6 +57,14 @@ modded class SCR_CharacterCommandHandlerComponent
 	}
 
 	//------------------------------------------------------------------------------------------------
+	//! Fall-damage ignore for scripted AI drops. Does not start a player canopy session
+	//! or inject native Fall.
+	void MHJ_BeginAiDropIgnore()
+	{
+		MHJ_BeginFallDamageIgnore();
+	}
+
+	//------------------------------------------------------------------------------------------------
 	//! GetInVehicle runs from native Fall. Do not Land the fall command first.
 	void MHJ_PrepareCanopyBoard()
 	{
@@ -239,6 +247,8 @@ modded class SCR_CharacterCommandHandlerComponent
 		if (m_bMHJ_IgnoreFallDamage)
 			return true;
 		if (m_bMHJ_ProtectHaloFall && GetCommandFall())
+			return true;
+		if (MHJ_AiDropDirector.IsActiveJumper(m_OwnerEntity))
 			return true;
 		return false;
 	}

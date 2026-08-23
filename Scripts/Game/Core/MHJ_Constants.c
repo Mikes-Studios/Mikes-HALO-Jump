@@ -69,8 +69,9 @@ class MHJ_Constants
 	//! so PerceivableComponent.IsInCompartment() cannot stick after the craft dies.
 	static const int CANOPY_EXIT_POLL_MS = 50;
 	static const int CANOPY_EXIT_MAX_TRIES = 40;
-	static const float CANOPY_CL_TRIM = 0.55;
-	static const float CANOPY_CD_TRIM = 0.15;
+	//! Hands-off polar. 0.55 / 0.15 flew too flat and hung at ~3.4 m/s sink.
+	static const float CANOPY_CL_TRIM = 0.42;
+	static const float CANOPY_CD_TRIM = 0.17;
 	static const float CANOPY_CL_DIVE_DROP = 0.50;
 	static const float CANOPY_CL_BRAKE_ADD = 0.48;
 	static const float CANOPY_CD_DIVE_ADD = -0.12;
@@ -84,13 +85,13 @@ class MHJ_Constants
 	static const float CANOPY_HEADING_LERP = 2.5;
 	static const float CANOPY_BANK_MAX = 32;
 	static const float CANOPY_BANK_INERTIA = 0.38;
-	static const float CANOPY_PITCH_CRUISE = 0;
+	static const float CANOPY_PITCH_CRUISE = -24;
 	static const float CANOPY_PITCH_DIVE = -85;
 	static const float CANOPY_PITCH_FLARE = 16;
 	static const float CANOPY_PITCH_SNATCH = 0;
 	static const float CANOPY_PITCH_INERTIA = 0.45;
 	//! Path angles must match visual pitch in cruise/dive so the wing flies where it points.
-	static const float CANOPY_PATH_CRUISE = -18;
+	static const float CANOPY_PATH_CRUISE = -24;
 	static const float CANOPY_PATH_DIVE = -85;
 	static const float CANOPY_PATH_FLARE = -2;
 	static const float CANOPY_PATH_ALIGN = 2.4;
@@ -102,6 +103,12 @@ class MHJ_Constants
 	static const float CANOPY_RELEASE_BLEED = 0.16;
 	static const float CANOPY_HANG_LENGTH = 4.2;
 	static const float CANOPY_HANG_INERTIA = 0.42;
+	//! World-up metres from the standing pawn's feet to the ParachuteMK3.xob
+	//! origin. That origin is the craft / harness, not the fabric — the player
+	//! sit slot is +1.474 above it, and the canopy is several metres above
+	//! that. Positive pushes the fabric farther from the AI. Negative puts
+	//! the AI into the harness. -1.474 parks feet on the sit slot.
+	static const float CANOPY_AI_VISUAL_Y = -1.474;
 	static const float CANOPY_STRETCH_TIME = 0.32;
 	static const float CANOPY_INFLATE_TIME = 1.05;
 	static const float CANOPY_OPEN_TIME = 2.4;
@@ -137,7 +144,15 @@ class MHJ_Constants
 	static const float WORLD_SIZE_FALLBACK = 12800;
 
 	static const string CANOPY_PREFAB = "{C4E8A27B1F906D90}Prefabs/MHJ_DeployedCanopy.et";
+	static const string CANOPY_MESH = "{A372F4DA63729C28}Assets/ParachuteMK3/ParachuteMK3.xob";
+	static const string CANOPY_MAT_CHUTE = "{85583F983D5A2BA8}Assets/ParachuteMK3/Data/Chute.emat";
+	static const string CANOPY_MAT_LINE = "{31106DE7805868A1}Assets/ParachuteMK3/Data/Line.emat";
 	static const string CANOPY_MESH_REMAP = "$remap 'Chute' '{85583F983D5A2BA8}Assets/ParachuteMK3/Data/Chute.emat'; $remap 'Line' '{31106DE7805868A1}Assets/ParachuteMK3/Data/Line.emat'; $remap '01__Default' '{17C975C41F8929BD}Assets/ParachuteMK3/Data/01__Default.emat'";
+	static const float AI_DROP_AGL = 380;
+	static const int AI_DROP_MAX = 40;
+	//! Applied only to the AI origin step. Do not write these back into m_vVel.
+	static const float AI_CANOPY_SPEED_SCALE = 0.5;
+	static const float AI_CANOPY_SINK_SCALE = 2;
 	static const string SLOT_FREEFALL = "freefall";
 	static const string SLOT_CANOPY = "passenger_l02";
 	static const int CRAFT_INTERACTION_LAYER = 0x4040;

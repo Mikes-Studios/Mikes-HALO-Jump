@@ -4,7 +4,7 @@
 //! as a sibling frame on the menu root. The frame is named MapFrame and hosts
 //! UIIconsContainer so paper-map pins and tasks can parent onto it. CLIPCHILDREN
 //! keeps those icons inside the picker when the map pans. OpenMap waits
-//! until the card intro has settled, then waits until the slot has not moved for
+//! until the picker parent-chain intro has settled, then waits until the slot has not moved for
 //! a beat, then OpenMap once. Clicks stay in map-widget space; overlay widgets
 //! are IGNORE_CURSOR.
 //!
