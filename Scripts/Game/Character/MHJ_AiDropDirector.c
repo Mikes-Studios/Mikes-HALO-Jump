@@ -13,11 +13,13 @@ class MHJ_AiDropDirector : GenericEntity
 	protected static MHJ_AiDropDirector s_Live;
 	protected static ref array<RplId> s_aRemoteIds;
 	protected static ref array<IEntity> s_aRemoteVisuals;
+	protected static ref array<ref MHJ_AiCanopyVisualPose> s_aRemotePoses;
 	protected static bool s_bRemoteTick;
 
 	protected ref array<ref MHJ_AiDropSlot> m_aSlots;
 	protected ref array<RplId> m_aClientIds;
 	protected ref array<IEntity> m_aVisuals;
+	protected ref array<ref MHJ_AiCanopyVisualPose> m_aVisualPoses;
 	protected ref ScriptInvoker m_OnJumperFinished;
 	protected bool m_bClosing;
 	protected static bool s_bLoggedVisualY;
@@ -103,6 +105,7 @@ class MHJ_AiDropDirector : GenericEntity
 		m_aSlots = new array<ref MHJ_AiDropSlot>();
 		m_aClientIds = new array<RplId>();
 		m_aVisuals = new array<IEntity>();
+		m_aVisualPoses = new array<ref MHJ_AiCanopyVisualPose>();
 
 		if (Replication.IsServer())
 			s_Live = this;
@@ -389,6 +392,10 @@ class MHJ_AiDropDirector : GenericEntity
 		if (!m_aVisuals)
 			m_aVisuals = new array<IEntity>();
 		m_aVisuals.Insert(null);
+		if (!m_aVisualPoses)
+			m_aVisualPoses = new array<ref MHJ_AiCanopyVisualPose>();
+		ref MHJ_AiCanopyVisualPose pose = new MHJ_AiCanopyVisualPose();
+		m_aVisualPoses.Insert(pose);
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -405,6 +412,8 @@ class MHJ_AiDropDirector : GenericEntity
 		m_aClientIds.Remove(index);
 		if (m_aVisuals && index < m_aVisuals.Count())
 			m_aVisuals.Remove(index);
+		if (m_aVisualPoses && index < m_aVisualPoses.Count())
+			m_aVisualPoses.Remove(index);
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -426,7 +435,7 @@ class MHJ_AiDropDirector : GenericEntity
 	//------------------------------------------------------------------------------------------------
 	protected void TickClientVisuals()
 	{
-		DriveVisualList(m_aClientIds, m_aVisuals);
+		DriveVisualList(m_aClientIds, m_aVisuals, m_aVisualPoses);
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -440,6 +449,8 @@ class MHJ_AiDropDirector : GenericEntity
 			s_aRemoteIds = new array<RplId>();
 		if (!s_aRemoteVisuals)
 			s_aRemoteVisuals = new array<IEntity>();
+		if (!s_aRemotePoses)
+			s_aRemotePoses = new array<ref MHJ_AiCanopyVisualPose>();
 
 		int count = s_aRemoteIds.Count();
 		int i;
@@ -451,6 +462,8 @@ class MHJ_AiDropDirector : GenericEntity
 
 		s_aRemoteIds.Insert(jumperId);
 		s_aRemoteVisuals.Insert(null);
+		ref MHJ_AiCanopyVisualPose pose = new MHJ_AiCanopyVisualPose();
+		s_aRemotePoses.Insert(pose);
 		if (s_bRemoteTick)
 			return;
 
@@ -485,6 +498,8 @@ class MHJ_AiDropDirector : GenericEntity
 				SCR_EntityHelper.DeleteEntityAndChildren(visual);
 			s_aRemoteVisuals.Remove(index);
 		}
+		if (s_aRemotePoses && index < s_aRemotePoses.Count())
+			s_aRemotePoses.Remove(index);
 		s_aRemoteIds.Remove(index);
 	}
 
@@ -503,11 +518,11 @@ class MHJ_AiDropDirector : GenericEntity
 			return;
 		}
 
-		DriveVisualList(s_aRemoteIds, s_aRemoteVisuals);
+		DriveVisualList(s_aRemoteIds, s_aRemoteVisuals, s_aRemotePoses);
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected static void DriveVisualList(array<RplId> ids, array<IEntity> visuals)
+	protected static void DriveVisualList(array<RplId> ids, array<IEntity> visuals, array<ref MHJ_AiCanopyVisualPose> poses)
 	{
 		if (!ids)
 			return;
@@ -532,8 +547,30 @@ class MHJ_AiDropDirector : GenericEntity
 			if (!visual)
 				continue;
 
-			DriveVisual(visual, jumper);
+			MHJ_AiCanopyVisualPose pose = EnsurePoseAt(poses, i);
+			DriveVisual(visual, jumper, pose);
 		}
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected static MHJ_AiCanopyVisualPose EnsurePoseAt(array<ref MHJ_AiCanopyVisualPose> poses, int index)
+	{
+		if (!poses)
+			return null;
+
+		while (poses.Count() <= index)
+		{
+			ref MHJ_AiCanopyVisualPose extra = new MHJ_AiCanopyVisualPose();
+			poses.Insert(extra);
+		}
+
+		MHJ_AiCanopyVisualPose pose = poses[index];
+		if (pose)
+			return pose;
+
+		ref MHJ_AiCanopyVisualPose created = new MHJ_AiCanopyVisualPose();
+		poses[index] = created;
+		return created;
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -587,12 +624,36 @@ class MHJ_AiDropDirector : GenericEntity
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected static void DriveVisual(notnull IEntity visual, notnull IEntity jumper)
+	//! Local mesh cannot copy the pawn matrix: infantry stay upright and
+	//! SetYawPitchRoll on a character does not become canopy pitch/bank.
+	//! Authority uses the slot's heading/path/turn; proxies follow motion.
+	protected static void DriveVisual(notnull IEntity visual, notnull IEntity jumper, MHJ_AiCanopyVisualPose pose)
 	{
-		vector mat[4];
-		jumper.GetWorldTransform(mat);
-		vector origin = mat[3];
+		vector origin = jumper.GetOrigin();
 		origin[1] = origin[1] + MHJ_Constants.CANOPY_AI_VISUAL_Y;
+
+		float dt = 0.016;
+		BaseWorld world = GetGame().GetWorld();
+		if (world)
+			dt = world.GetTimeSlice();
+
+		float wantYaw;
+		float wantPitch;
+		float wantBank;
+		ResolveVisualAngles(jumper, pose, wantYaw, wantPitch, wantBank);
+
+		vector ypr;
+		if (pose)
+			pose.Apply(origin, wantYaw, wantPitch, wantBank, dt, ypr);
+		else
+		{
+			ypr[0] = wantYaw;
+			ypr[1] = wantPitch;
+			ypr[2] = wantBank;
+		}
+
+		vector mat[4];
+		Math3D.AnglesToMatrix(ypr, mat);
 		mat[3] = origin;
 		visual.SetWorldTransform(mat);
 		visual.Update();
@@ -601,6 +662,61 @@ class MHJ_AiDropDirector : GenericEntity
 			return;
 		s_bLoggedVisualY = true;
 		MHJ_Log.Info("AI canopy visual Y=" + MHJ_Constants.CANOPY_AI_VISUAL_Y.ToString());
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected static void ResolveVisualAngles(notnull IEntity jumper, MHJ_AiCanopyVisualPose pose, out float wantYaw, out float wantPitch, out float wantBank)
+	{
+		wantYaw = jumper.GetYawPitchRoll()[0];
+		wantPitch = MHJ_Constants.CANOPY_PITCH_CRUISE;
+		wantBank = 0;
+
+		MHJ_AiDropSlot slot = null;
+		if (s_Live)
+			slot = s_Live.FindSlot(jumper);
+		if (slot)
+		{
+			wantYaw = slot.m_fHeading * Math.RAD2DEG;
+			wantPitch = slot.m_fPathDeg;
+			wantBank = slot.m_fTurnFilt * MHJ_Constants.CANOPY_BANK_MAX;
+			return;
+		}
+
+		if (!pose || !pose.m_bSeeded)
+			return;
+
+		vector delta = jumper.GetOrigin() - pose.m_vPrevOrigin;
+		vector horiz = delta;
+		horiz[1] = 0;
+		float horizLen = horiz.Length();
+		if (horizLen > 0.02)
+			wantYaw = Math.Atan2(horiz[0], horiz[2]) * Math.RAD2DEG;
+
+		if (horizLen > 0.02)
+		{
+			wantPitch = Math.Atan2(delta[1], horizLen) * Math.RAD2DEG;
+			if (wantPitch < MHJ_Constants.CANOPY_PITCH_DIVE)
+				wantPitch = MHJ_Constants.CANOPY_PITCH_DIVE;
+			if (wantPitch > MHJ_Constants.CANOPY_PITCH_FLARE)
+				wantPitch = MHJ_Constants.CANOPY_PITCH_FLARE;
+		}
+
+		float dt = 0.016;
+		BaseWorld world = GetGame().GetWorld();
+		if (world)
+			dt = world.GetTimeSlice();
+		if (dt < 0.001)
+			dt = 0.001;
+
+		float yawRate = MHJ_AiCanopyVisualPose.WrapDeg(wantYaw - pose.m_fYaw) / dt;
+		float turnDeg = MHJ_Constants.CANOPY_TURN_RATE * Math.RAD2DEG;
+		if (turnDeg < 0.5)
+			turnDeg = 0.5;
+		wantBank = (yawRate / turnDeg) * MHJ_Constants.CANOPY_BANK_MAX;
+		if (wantBank > MHJ_Constants.CANOPY_BANK_MAX)
+			wantBank = MHJ_Constants.CANOPY_BANK_MAX;
+		if (wantBank < -MHJ_Constants.CANOPY_BANK_MAX)
+			wantBank = -MHJ_Constants.CANOPY_BANK_MAX;
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -642,5 +758,7 @@ class MHJ_AiDropDirector : GenericEntity
 		for (i = 0; i < count; i++)
 			DestroyVisualAt(i);
 		m_aVisuals.Clear();
+		if (m_aVisualPoses)
+			m_aVisualPoses.Clear();
 	}
 }
