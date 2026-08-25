@@ -12,6 +12,19 @@ class MHJ_AiCanopyVisualPose
 	float m_fPitchV;
 	float m_fBankV;
 	bool m_bSeeded;
+	bool m_bHasRelay;
+	float m_fRelayYaw;
+	float m_fRelayPitch;
+	float m_fRelayBank;
+
+	//------------------------------------------------------------------------------------------------
+	void SetRelay(float yaw, float pitch, float bank)
+	{
+		m_fRelayYaw = yaw;
+		m_fRelayPitch = pitch;
+		m_fRelayBank = bank;
+		m_bHasRelay = true;
+	}
 
 	//------------------------------------------------------------------------------------------------
 	void Apply(vector origin, float wantYaw, float wantPitch, float wantBank, float dt, out vector ypr)

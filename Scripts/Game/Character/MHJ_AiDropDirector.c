@@ -22,6 +22,7 @@ class MHJ_AiDropDirector : GenericEntity
 	protected ref array<ref MHJ_AiCanopyVisualPose> m_aVisualPoses;
 	protected ref ScriptInvoker m_OnJumperFinished;
 	protected bool m_bClosing;
+	protected float m_fPoseSendTime;
 	protected static bool s_bLoggedVisualY;
 
 	//------------------------------------------------------------------------------------------------
@@ -144,7 +145,7 @@ class MHJ_AiDropDirector : GenericEntity
 		PrepareJumper(jumper);
 		m_aSlots.Insert(slot);
 		AddClientId(jumperId);
-		RelayAdd(jumperId);
+		RelayAdd(jumperId, SlotVisualYpr(slot));
 		MHJ_Log.Info("AI drop jumper added id=" + jumperId.ToString());
 		return true;
 	}
@@ -213,6 +214,8 @@ class MHJ_AiDropDirector : GenericEntity
 				continue;
 			TickSlot(slot, timeSlice);
 		}
+
+		RelayPoses(timeSlice);
 
 		if (!m_bClosing && ActiveSlotCount() <= 0 && count > 0)
 			BeginClose();
@@ -364,11 +367,11 @@ class MHJ_AiDropDirector : GenericEntity
 	}
 
 	//------------------------------------------------------------------------------------------------
-	protected void RelayAdd(RplId jumperId)
+	protected void RelayAdd(RplId jumperId, vector ypr)
 	{
 		SCR_BaseGameMode gameMode = SCR_BaseGameMode.Cast(GetGame().GetGameMode());
 		if (gameMode)
-			gameMode.MHJ_RelayAiDropAdd(jumperId);
+			gameMode.MHJ_RelayAiDropAdd(jumperId, ypr);
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -377,6 +380,44 @@ class MHJ_AiDropDirector : GenericEntity
 		SCR_BaseGameMode gameMode = SCR_BaseGameMode.Cast(GetGame().GetGameMode());
 		if (gameMode)
 			gameMode.MHJ_RelayAiDropRemove(jumperId);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void RelayPoses(float timeSlice)
+	{
+		if (!m_aSlots)
+			return;
+
+		m_fPoseSendTime = m_fPoseSendTime + timeSlice;
+		if (m_fPoseSendTime < MHJ_Constants.AI_VISUAL_POSE_DT)
+			return;
+		m_fPoseSendTime = 0;
+
+		SCR_BaseGameMode gameMode = SCR_BaseGameMode.Cast(GetGame().GetGameMode());
+		if (!gameMode)
+			return;
+
+		int count = m_aSlots.Count();
+		int i;
+		for (i = 0; i < count; i++)
+		{
+			MHJ_AiDropSlot slot = m_aSlots[i];
+			if (!slot || !slot.m_bActive)
+				continue;
+			if (!slot.m_JumperId.IsValid())
+				continue;
+			gameMode.MHJ_RelayAiDropPose(slot.m_JumperId, SlotVisualYpr(slot));
+		}
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected static vector SlotVisualYpr(notnull MHJ_AiDropSlot slot)
+	{
+		vector ypr;
+		ypr[0] = slot.m_fHeading * Math.RAD2DEG;
+		ypr[1] = slot.m_fPathDeg;
+		ypr[2] = slot.m_fTurnFilt * MHJ_Constants.CANOPY_BANK_MAX;
+		return ypr;
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -439,7 +480,7 @@ class MHJ_AiDropDirector : GenericEntity
 	}
 
 	//------------------------------------------------------------------------------------------------
-	static void ClientAddRemote(RplId jumperId)
+	static void ClientAddRemote(RplId jumperId, vector ypr)
 	{
 		if (!jumperId.IsValid())
 			return;
@@ -452,23 +493,73 @@ class MHJ_AiDropDirector : GenericEntity
 		if (!s_aRemotePoses)
 			s_aRemotePoses = new array<ref MHJ_AiCanopyVisualPose>();
 
-		int count = s_aRemoteIds.Count();
-		int i;
-		for (i = 0; i < count; i++)
+		int index = FindRemoteId(jumperId);
+		if (index >= 0)
 		{
-			if (s_aRemoteIds[i] == jumperId)
-				return;
+			ApplyRelayAt(index, ypr);
+			return;
 		}
 
 		s_aRemoteIds.Insert(jumperId);
 		s_aRemoteVisuals.Insert(null);
 		ref MHJ_AiCanopyVisualPose pose = new MHJ_AiCanopyVisualPose();
+		pose.SetRelay(ypr[0], ypr[1], ypr[2]);
 		s_aRemotePoses.Insert(pose);
 		if (s_bRemoteTick)
 			return;
 
 		s_bRemoteTick = true;
 		GetGame().GetCallqueue().CallLater(TickRemoteVisuals, 0, true);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	static void ClientApplyRelay(RplId jumperId, vector ypr)
+	{
+		if (!jumperId.IsValid())
+			return;
+		if (s_Live)
+			return;
+
+		int index = FindRemoteId(jumperId);
+		if (index < 0)
+		{
+			ClientAddRemote(jumperId, ypr);
+			return;
+		}
+
+		ApplyRelayAt(index, ypr);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected static int FindRemoteId(RplId jumperId)
+	{
+		if (!s_aRemoteIds)
+			return -1;
+
+		int count = s_aRemoteIds.Count();
+		int i;
+		for (i = 0; i < count; i++)
+		{
+			if (s_aRemoteIds[i] == jumperId)
+				return i;
+		}
+		return -1;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected static void ApplyRelayAt(int index, vector ypr)
+	{
+		if (!s_aRemotePoses || index < 0 || index >= s_aRemotePoses.Count())
+			return;
+
+		MHJ_AiCanopyVisualPose pose = s_aRemotePoses[index];
+		if (!pose)
+		{
+			ref MHJ_AiCanopyVisualPose created = new MHJ_AiCanopyVisualPose();
+			s_aRemotePoses[index] = created;
+			pose = created;
+		}
+		pose.SetRelay(ypr[0], ypr[1], ypr[2]);
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -676,47 +767,27 @@ class MHJ_AiDropDirector : GenericEntity
 			slot = s_Live.FindSlot(jumper);
 		if (slot)
 		{
-			wantYaw = slot.m_fHeading * Math.RAD2DEG;
-			wantPitch = slot.m_fPathDeg;
-			wantBank = slot.m_fTurnFilt * MHJ_Constants.CANOPY_BANK_MAX;
+			vector ypr = SlotVisualYpr(slot);
+			wantYaw = ypr[0];
+			wantPitch = ypr[1];
+			wantBank = ypr[2];
 			return;
 		}
 
-		if (!pose || !pose.m_bSeeded)
-			return;
-
-		vector delta = jumper.GetOrigin() - pose.m_vPrevOrigin;
-		vector horiz = delta;
-		horiz[1] = 0;
-		float horizLen = horiz.Length();
-		if (horizLen > 0.02)
-			wantYaw = Math.Atan2(horiz[0], horiz[2]) * Math.RAD2DEG;
-
-		if (horizLen > 0.02)
+		if (pose && pose.m_bHasRelay)
 		{
-			wantPitch = Math.Atan2(delta[1], horizLen) * Math.RAD2DEG;
-			if (wantPitch < MHJ_Constants.CANOPY_PITCH_DIVE)
-				wantPitch = MHJ_Constants.CANOPY_PITCH_DIVE;
-			if (wantPitch > MHJ_Constants.CANOPY_PITCH_FLARE)
-				wantPitch = MHJ_Constants.CANOPY_PITCH_FLARE;
+			wantYaw = pose.m_fRelayYaw;
+			wantPitch = pose.m_fRelayPitch;
+			wantBank = pose.m_fRelayBank;
+			return;
 		}
 
-		float dt = 0.016;
-		BaseWorld world = GetGame().GetWorld();
-		if (world)
-			dt = world.GetTimeSlice();
-		if (dt < 0.001)
-			dt = 0.001;
-
-		float yawRate = MHJ_AiCanopyVisualPose.WrapDeg(wantYaw - pose.m_fYaw) / dt;
-		float turnDeg = MHJ_Constants.CANOPY_TURN_RATE * Math.RAD2DEG;
-		if (turnDeg < 0.5)
-			turnDeg = 0.5;
-		wantBank = (yawRate / turnDeg) * MHJ_Constants.CANOPY_BANK_MAX;
-		if (wantBank > MHJ_Constants.CANOPY_BANK_MAX)
-			wantBank = MHJ_Constants.CANOPY_BANK_MAX;
-		if (wantBank < -MHJ_Constants.CANOPY_BANK_MAX)
-			wantBank = -MHJ_Constants.CANOPY_BANK_MAX;
+		if (pose && pose.m_bSeeded)
+		{
+			wantYaw = pose.m_fYaw;
+			wantPitch = pose.m_fPitch;
+			wantBank = pose.m_fBank;
+		}
 	}
 
 	//------------------------------------------------------------------------------------------------
