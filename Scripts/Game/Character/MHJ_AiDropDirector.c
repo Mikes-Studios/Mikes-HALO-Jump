@@ -236,7 +236,7 @@ class MHJ_AiDropDirector : GenericEntity
 		MHJ_AiDropAutopilot.Step(slot, dt);
 		ApplySlotToJumper(slot);
 
-		float agl = MHJ_AiDropAutopilot.GetAgl(slot.m_vOrigin);
+		float agl = MHJ_AiDropAutopilot.GetAgl(slot.m_vOrigin, jumper);
 		if (agl <= MHJ_Constants.LAND_AGL)
 		{
 			LandSlot(slot);
@@ -272,9 +272,17 @@ class MHJ_AiDropDirector : GenericEntity
 	{
 		ChimeraCharacter jumper = slot.m_Character;
 		vector origin = slot.m_vOrigin;
-		BaseWorld world = GetGame().GetWorld();
-		if (world)
-			origin[1] = world.GetSurfaceY(origin[0], origin[2]) + 0.1;
+		float groundY = MHJ_AiDropAutopilot.GroundY(origin, jumper);
+		origin[1] = groundY + MHJ_Constants.AI_LAND_BIAS_M;
+
+		vector openPos;
+		if (MHJ_AiDropAutopilot.TryFindOpenGround(origin, MHJ_Constants.AI_LAND_SEARCH_M, jumper, openPos))
+		{
+			if (openPos != origin)
+				MHJ_Log.Info("AI drop relocated id=" + slot.m_JumperId.ToString() + " to " + openPos.ToString());
+			origin = openPos;
+		}
+
 		slot.m_vOrigin = origin;
 		slot.m_vVel = vector.Zero;
 

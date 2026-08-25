@@ -44,7 +44,7 @@ class MHJ_AiDropAutopilot
 		slot.m_fOpenT = slot.m_fOpenT + dt;
 		slot.m_vWind = MHJ_FlightAero.WindWorld(slot.m_vOrigin[1], slot.m_fSimT);
 
-		float agl = GetAgl(slot.m_vOrigin);
+		float agl = GetAgl(slot.m_vOrigin, slot.m_Character);
 		float turn;
 		float pitch;
 		ComputeInput(slot, agl, turn, pitch);
@@ -187,14 +187,121 @@ class MHJ_AiDropAutopilot
 	}
 
 	//------------------------------------------------------------------------------------------------
-	static float GetAgl(vector origin)
+	//! First WORLD|ENTS hit below pos, then the terrain mesh. Exclude the
+	//! jumper so the down-trace does not stop on the pawn itself.
+	static float GroundY(vector pos, IEntity ignore)
 	{
 		BaseWorld world = GetGame().GetWorld();
 		if (!world)
-			return origin[1];
+			return pos[1];
 
-		float terrainY = world.GetSurfaceY(origin[0], origin[2]);
-		float agl = origin[1] - terrainY;
+		ref TraceParam down = new TraceParam();
+		down.Start = pos;
+		down.End = Vector(pos[0], pos[1] - MHJ_Constants.AI_GROUND_TRACE_M, pos[2]);
+		down.Flags = TraceFlags.WORLD | TraceFlags.ENTS;
+		if (ignore)
+			down.Exclude = ignore;
+
+		float coef = world.TraceMove(down, null);
+		if (coef < 1)
+			return down.Start[1] - (down.Start[1] - down.End[1]) * coef;
+
+		return world.GetSurfaceY(pos[0], pos[2]);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	static bool HasStandRoom(vector pos, float clearance)
+	{
+		BaseWorld world = GetGame().GetWorld();
+		if (!world)
+			return false;
+
+		ref TraceParam up = new TraceParam();
+		up.Start = pos + Vector(0, 0.12, 0);
+		up.End = up.Start + Vector(0, clearance, 0);
+		up.Flags = TraceFlags.WORLD | TraceFlags.ENTS;
+		float coef = world.TraceMove(up, null);
+		if (coef < 1.0)
+			return false;
+
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	static bool HasOpenSky(vector pos)
+	{
+		return HasStandRoom(pos, MHJ_Constants.AI_DROP_SKY_M);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected static bool IsOpenGroundAt(vector sample, IEntity ignore, out vector outPos)
+	{
+		outPos = vector.Zero;
+
+		BaseWorld world = GetGame().GetWorld();
+		if (!world)
+			return false;
+
+		float groundY = GroundY(sample, ignore);
+		float terrainY = world.GetSurfaceY(sample[0], sample[2]);
+		if (groundY - terrainY > MHJ_Constants.AI_LAND_MAX_ABOVE_M)
+			return false;
+
+		vector hit;
+		hit[0] = sample[0];
+		hit[1] = groundY + MHJ_Constants.AI_LAND_BIAS_M;
+		hit[2] = sample[2];
+
+		if (!HasStandRoom(hit, MHJ_Constants.AI_LAND_STAND_M))
+			return false;
+		if (!HasOpenSky(hit))
+			return false;
+
+		outPos = hit;
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	static bool TryFindOpenGround(vector sample, float radius, IEntity ignore, out vector outPos)
+	{
+		outPos = vector.Zero;
+		if (IsOpenGroundAt(sample, ignore, outPos))
+			return true;
+
+		if (radius <= 0.5)
+			return false;
+
+		int rings = 4;
+		int ring;
+		for (ring = 1; ring <= rings; ring++)
+		{
+			float ringF = ring;
+			float ringsF = rings;
+			float searchR = radius * (ringF / ringsF);
+			int steps = 6 * ring;
+			int step;
+			for (step = 0; step < steps; step++)
+			{
+				float stepF = step;
+				float stepsF = steps;
+				float angle = Math.PI2 * (stepF / stepsF);
+				vector probe;
+				probe[0] = sample[0] + Math.Cos(angle) * searchR;
+				probe[2] = sample[2] + Math.Sin(angle) * searchR;
+				probe[1] = sample[1];
+				if (IsOpenGroundAt(probe, ignore, outPos))
+					return true;
+			}
+		}
+
+		return false;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	static float GetAgl(vector origin, IEntity ignore)
+	{
+		float groundY = GroundY(origin, ignore);
+		float agl = origin[1] - groundY;
 		if (agl < 0)
 			agl = 0;
 		return agl;

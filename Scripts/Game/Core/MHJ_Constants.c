@@ -108,7 +108,7 @@ class MHJ_Constants
 	//! sit slot is +1.474 above it, and the canopy is several metres above
 	//! that. Positive pushes the fabric farther from the AI. Negative puts
 	//! the AI into the harness. -1.474 parks feet on the sit slot.
-	static const float CANOPY_AI_VISUAL_Y = -1.474;
+	static const float CANOPY_AI_VISUAL_Y = -0.474;
 	static const float CANOPY_STRETCH_TIME = 0.32;
 	static const float CANOPY_INFLATE_TIME = 1.05;
 	static const float CANOPY_OPEN_TIME = 2.4;
@@ -153,6 +153,14 @@ class MHJ_Constants
 	//! Applied only to the AI origin step. Do not write these back into m_vVel.
 	static const float AI_CANOPY_SPEED_SCALE = 0.5;
 	static const float AI_CANOPY_SINK_SCALE = 2;
+	//! Open-sky up-trace. 1.9 m stand room still passes interiors.
+	static const float AI_DROP_SKY_M = 12;
+	static const float AI_LAND_STAND_M = 1.9;
+	static const float AI_LAND_BIAS_M = 0.1;
+	static const float AI_LAND_SEARCH_M = 16;
+	//! Rooftops sit well above the terrain mesh.
+	static const float AI_LAND_MAX_ABOVE_M = 4.5;
+	static const float AI_GROUND_TRACE_M = 100;
 	static const string SLOT_FREEFALL = "freefall";
 	static const string SLOT_CANOPY = "passenger_l02";
 	static const int CRAFT_INTERACTION_LAYER = 0x4040;
