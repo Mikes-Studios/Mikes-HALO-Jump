@@ -153,12 +153,22 @@ class MHJ_Constants
 	//! Applied only to the AI origin step. Do not write these back into m_vVel.
 	static const float AI_CANOPY_SPEED_SCALE = 0.5;
 	static const float AI_CANOPY_SINK_SCALE = 2;
-	//! Open-sky up-trace. 1.9 m stand room still passes interiors.
+	//! Height the open-sky check traces down from. 1.9 m stand room alone still
+	//! passes interiors.
 	static const float AI_DROP_SKY_M = 12;
 	static const float AI_LAND_STAND_M = 1.9;
 	static const float AI_LAND_BIAS_M = 0.1;
 	static const float AI_LAND_SEARCH_M = 16;
 	static const float AI_GROUND_TRACE_M = 100;
+	//! Swept collision for the AI origin step. SetOrigin never collides, so the
+	//! step is traced as a torso sphere: centre AI_SWEEP_CHEST_M above the feet
+	//! so terrain under a descending jumper does not block forward flight.
+	static const float AI_SWEEP_R_M = 0.4;
+	static const float AI_SWEEP_CHEST_M = 1.0;
+	static const float AI_SWEEP_SKIN_M = 0.12;
+	//! Down-trace start offset above the pre-step feet. Starting on the surface
+	//! can report the collider the jumper is already resting on.
+	static const float AI_SWEEP_UP_M = 0.5;
 	static const string SLOT_FREEFALL = "freefall";
 	static const string SLOT_CANOPY = "passenger_l02";
 	static const int CRAFT_INTERACTION_LAYER = 0x4040;
