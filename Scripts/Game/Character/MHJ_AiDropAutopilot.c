@@ -234,19 +234,12 @@ class MHJ_AiDropAutopilot
 	}
 
 	//------------------------------------------------------------------------------------------------
+	//! Streets and rooftops pass. Interiors fail the open-sky up-trace.
 	protected static bool IsOpenGroundAt(vector sample, IEntity ignore, out vector outPos)
 	{
 		outPos = vector.Zero;
 
-		BaseWorld world = GetGame().GetWorld();
-		if (!world)
-			return false;
-
 		float groundY = GroundY(sample, ignore);
-		float terrainY = world.GetSurfaceY(sample[0], sample[2]);
-		if (groundY - terrainY > MHJ_Constants.AI_LAND_MAX_ABOVE_M)
-			return false;
-
 		vector hit;
 		hit[0] = sample[0];
 		hit[1] = groundY + MHJ_Constants.AI_LAND_BIAS_M;

@@ -158,8 +158,6 @@ class MHJ_Constants
 	static const float AI_LAND_STAND_M = 1.9;
 	static const float AI_LAND_BIAS_M = 0.1;
 	static const float AI_LAND_SEARCH_M = 16;
-	//! Rooftops sit well above the terrain mesh.
-	static const float AI_LAND_MAX_ABOVE_M = 4.5;
 	static const float AI_GROUND_TRACE_M = 100;
 	static const string SLOT_FREEFALL = "freefall";
 	static const string SLOT_CANOPY = "passenger_l02";
