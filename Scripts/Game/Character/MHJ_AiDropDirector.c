@@ -14,6 +14,9 @@ class MHJ_AiDropDirector : GenericEntity
 	protected static ref array<RplId> s_aRemoteIds;
 	protected static ref array<IEntity> s_aRemoteVisuals;
 	protected static ref array<ref MHJ_AiCanopyVisualPose> s_aRemotePoses;
+	//! Unreliable pose packets can arrive after the reliable land remove.
+	//! Those IDs stay here so a late pose cannot spawn a new mesh on a walker.
+	protected static ref array<RplId> s_aFinishedIds;
 	protected static bool s_bRemoteTick;
 
 	protected ref array<ref MHJ_AiDropSlot> m_aSlots;
@@ -486,6 +489,8 @@ class MHJ_AiDropDirector : GenericEntity
 			return;
 		if (s_Live)
 			return;
+		if (IsFinishedId(jumperId))
+			return;
 		if (!s_aRemoteIds)
 			s_aRemoteIds = new array<RplId>();
 		if (!s_aRemoteVisuals)
@@ -519,13 +524,12 @@ class MHJ_AiDropDirector : GenericEntity
 			return;
 		if (s_Live)
 			return;
+		if (IsFinishedId(jumperId))
+			return;
 
 		int index = FindRemoteId(jumperId);
 		if (index < 0)
-		{
-			ClientAddRemote(jumperId, ypr);
 			return;
-		}
 
 		ApplyRelayAt(index, ypr);
 	}
@@ -565,20 +569,15 @@ class MHJ_AiDropDirector : GenericEntity
 	//------------------------------------------------------------------------------------------------
 	static void ClientRemoveRemote(RplId jumperId)
 	{
+		if (!jumperId.IsValid())
+			return;
+
+		MarkFinishedId(jumperId);
+
 		if (!s_aRemoteIds)
 			return;
 
-		int count = s_aRemoteIds.Count();
-		int i;
-		int index = -1;
-		for (i = 0; i < count; i++)
-		{
-			if (s_aRemoteIds[i] == jumperId)
-			{
-				index = i;
-				break;
-			}
-		}
+		int index = FindRemoteId(jumperId);
 		if (index < 0)
 			return;
 
@@ -592,6 +591,35 @@ class MHJ_AiDropDirector : GenericEntity
 		if (s_aRemotePoses && index < s_aRemotePoses.Count())
 			s_aRemotePoses.Remove(index);
 		s_aRemoteIds.Remove(index);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected static bool IsFinishedId(RplId jumperId)
+	{
+		if (!s_aFinishedIds)
+			return false;
+
+		int count = s_aFinishedIds.Count();
+		int i;
+		for (i = 0; i < count; i++)
+		{
+			if (s_aFinishedIds[i] == jumperId)
+				return true;
+		}
+		return false;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected static void MarkFinishedId(RplId jumperId)
+	{
+		if (!jumperId.IsValid())
+			return;
+		if (IsFinishedId(jumperId))
+			return;
+
+		if (!s_aFinishedIds)
+			s_aFinishedIds = new array<RplId>();
+		s_aFinishedIds.Insert(jumperId);
 	}
 
 	//------------------------------------------------------------------------------------------------
