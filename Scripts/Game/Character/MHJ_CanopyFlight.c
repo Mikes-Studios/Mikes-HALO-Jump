@@ -1047,7 +1047,7 @@ class MHJ_CanopyFlight : ScriptComponent
 			if (m_bCanopyHintShown)
 				return;
 			m_bCanopyHintShown = true;
-			SCR_HintManagerComponent.ShowCustomHint("W dives. S flares — dive first to swoop. Land into the wind.", "CANOPY", 7);
+			SCR_HintManagerComponent.ShowCustomHint("W dives. S flares. Dive first to swoop. Land into the wind.", "CANOPY", 7);
 			return;
 		}
 
