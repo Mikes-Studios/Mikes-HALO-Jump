@@ -1,18 +1,19 @@
 //------------------------------------------------------------------------------------------------
-//! Display-only paper-map pins on the HALO planner. Pins clip to MapFrame.
-//! Vanilla MarkersUI also binds
+//! Display-only paper-map pins on the HALO planner and any other MHJ_MapHost
+//! session (GM Director). Pins clip to MapFrame. Vanilla MarkersUI also binds
 //! MapSelect / menu confirm which would steal click-to-drop. Strip those listeners
-//! while the planner is open. Null-check the game-mode marker manager so modes
-//! without one do not NPE. Planner conf has no SCR_MapCursorModule, so vanilla
-//! CleanupMarkerEditWidget must not call HandleDialog on a null cursor. Do not
-//! mod SCR_MapMarkerBase — its snapshot serializers do not merge and RPCs that
+//! while a cursor-less map is open — not only when the HALO jump menu is open.
+//! Null-check the game-mode marker manager so modes without one do not NPE.
+//! Planner conf has no SCR_MapCursorModule, so vanilla CleanupMarkerEditWidget
+//! and OnInputMapSelect must not call into a null cursor. Do not mod
+//! SCR_MapMarkerBase — its snapshot serializers do not merge and RPCs that
 //! pass that type fail to compile.
 //!
 //! Consumer: loaded with the addon. Do not instantiate.
 //!
 //! Extend: keep the planner input strip, cursor stamp, manager null-check,
-//! MapFrame clip, and cursor-less CleanupMarkerEditWidget; call super when
-//! the manager exists.
+//! MapFrame clip, cursor-less CleanupMarkerEditWidget, and OnInputMapSelect
+//! guard; call super when the manager / cursor exists.
 //------------------------------------------------------------------------------------------------
 modded class SCR_MapMarkersUI
 {
@@ -38,8 +39,11 @@ modded class SCR_MapMarkersUI
 
 		super.OnMapOpen(config);
 
-		if (!MHJ_HaloJumpMenu.IsOpen())
-			return;
+		if (m_CursorModule)
+		{
+			if (!MHJ_HaloJumpMenu.IsOpen())
+				return;
+		}
 
 		MHJ_StripPlannerInput();
 		MHJ_IgnorePlannerMarkerCursor();
@@ -67,12 +71,24 @@ modded class SCR_MapMarkersUI
 	}
 
 	//------------------------------------------------------------------------------------------------
+	override void OnInputMapSelect(float value, EActionTrigger reason)
+	{
+		if (!m_CursorModule)
+			return;
+
+		super.OnInputMapSelect(value, reason);
+	}
+
+	//------------------------------------------------------------------------------------------------
 	override void Update(float timeSlice)
 	{
 		super.Update(timeSlice);
 
-		if (!MHJ_HaloJumpMenu.IsOpen())
-			return;
+		if (m_CursorModule)
+		{
+			if (!MHJ_HaloJumpMenu.IsOpen())
+				return;
+		}
 
 		MHJ_IgnorePlannerMarkerCursor();
 	}
