@@ -219,7 +219,7 @@ class MHJ_HaloJumpMenu
 		card.SetIntro(0.16, 0.4, 18);
 
 		ref MUI_LiveHeader liveHeader = runtime.CreateLiveHeader("HALO JUMP", "liveHeader");
-		liveHeader.SetKicker("MIKE'S HALO  //  DROP PLANNER");
+		liveHeader.SetKicker("DROP PLANNER");
 		liveHeader.SetIntro(0.22, 0.4, 18);
 
 		ref MUI_Label subtitle = runtime.CreateLabel("Pick a drop site or click the map. Drag pans, wheel zooms. Controller: D-pad the list, A selects, stick pans, triggers zoom.", "subtitle");

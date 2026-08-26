@@ -44,7 +44,7 @@ class MHJ_AiDropAutopilot
 		slot.m_fOpenT = slot.m_fOpenT + dt;
 		slot.m_vWind = MHJ_FlightAero.WindWorld(slot.m_vOrigin[1], slot.m_fSimT);
 
-		float agl = GetAgl(slot.m_vOrigin);
+		float agl = GetAgl(slot.m_vOrigin, slot.m_Character);
 		float turn;
 		float pitch;
 		ComputeInput(slot, agl, turn, pitch);
@@ -66,7 +66,116 @@ class MHJ_AiDropAutopilot
 
 		Integrate(slot, dt, dive, brake);
 		vector step = WorldStepVel(slot);
-		slot.m_vOrigin = slot.m_vOrigin + step * dt;
+		AdvanceOrigin(slot, step, dt);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! The director drives the pawn with SetOrigin, which does not collide, so
+	//! the step itself has to. Horizontal motion is sphere-swept against
+	//! WORLD|ENTS and slides along whatever it hits; the descent is clamped to
+	//! the first surface below. Without this a canopy flies straight through a
+	//! wall and then lands on the interior floor, where no open-sky test can
+	//! save it.
+	static void AdvanceOrigin(notnull MHJ_AiDropSlot slot, vector step, float dt)
+	{
+		vector from = slot.m_vOrigin;
+		vector delta = step * dt;
+		float fall = delta[1];
+		delta[1] = 0;
+
+		vector moved;
+		vector norm;
+		float travelled;
+		if (SweepSphere(from, delta, slot.m_Character, moved, norm, travelled))
+			moved = SlideAlongHit(slot, from, delta, moved, norm, travelled);
+
+		float groundY = GroundY(Vector(moved[0], from[1] + MHJ_Constants.AI_SWEEP_UP_M, moved[2]), slot.m_Character);
+		float wantY = moved[1] + fall;
+		float minY = groundY + MHJ_Constants.AI_LAND_BIAS_M;
+		if (wantY < minY)
+			wantY = minY;
+
+		moved[1] = wantY;
+		slot.m_vOrigin = moved;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! Project the blocked remainder onto the wall face and re-sweep it, then
+	//! point the canopy that way so it skirts the building instead of grinding
+	//! into it. Homing steers back toward the LZ once the face is clear.
+	protected static vector SlideAlongHit(notnull MHJ_AiDropSlot slot, vector from, vector delta, vector blocked, vector norm, float travelled)
+	{
+		float dist = delta.Length();
+		if (dist < 0.001)
+			return blocked;
+
+		vector dir = delta;
+		dir.Normalize();
+
+		norm[1] = 0;
+		if (norm.Length() < 0.05)
+			return blocked;
+
+		norm.Normalize();
+		vector slide = dir - norm * vector.Dot(dir, norm);
+		if (slide.Length() < 0.05)
+			return blocked;
+
+		slide.Normalize();
+		slot.m_fHeading = Math.Atan2(slide[0], slide[2]);
+
+		float remain = dist - travelled;
+		if (remain < 0.001)
+			return blocked;
+
+		vector slid;
+		vector slideNorm;
+		float slideTravelled;
+		SweepSphere(blocked, slide * remain, slot.m_Character, slid, slideNorm, slideTravelled);
+		return slid;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! Torso-height sphere sweep. Returns true when the move was cut short.
+	protected static bool SweepSphere(vector from, vector delta, IEntity ignore, out vector outPos, out vector outNorm, out float outMoved)
+	{
+		outPos = from + delta;
+		outNorm = vector.Zero;
+		outMoved = delta.Length();
+
+		if (outMoved < 0.001)
+		{
+			outPos = from;
+			return false;
+		}
+
+		BaseWorld world = GetGame().GetWorld();
+		if (!world)
+			return false;
+
+		vector chest = Vector(0, MHJ_Constants.AI_SWEEP_CHEST_M, 0);
+		ref TraceSphere sweep = new TraceSphere();
+		sweep.Radius = MHJ_Constants.AI_SWEEP_R_M;
+		sweep.Start = from + chest;
+		sweep.End = from + delta + chest;
+		sweep.Flags = TraceFlags.WORLD | TraceFlags.ENTS;
+		if (ignore)
+			sweep.Exclude = ignore;
+
+		float coef = world.TraceMove(sweep, null);
+		if (coef >= 1)
+			return false;
+
+		float allowed = outMoved * coef - MHJ_Constants.AI_SWEEP_SKIN_M;
+		if (allowed < 0)
+			allowed = 0;
+
+		vector dir = delta;
+		dir.Normalize();
+		outPos = from + dir * allowed;
+		outNorm = sweep.TraceNorm;
+		outMoved = allowed;
+		return true;
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -187,14 +296,129 @@ class MHJ_AiDropAutopilot
 	}
 
 	//------------------------------------------------------------------------------------------------
-	static float GetAgl(vector origin)
+	//! First WORLD|ENTS hit below pos, then the terrain mesh. Exclude the
+	//! jumper so the down-trace does not stop on the pawn itself.
+	static float GroundY(vector pos, IEntity ignore)
 	{
 		BaseWorld world = GetGame().GetWorld();
 		if (!world)
-			return origin[1];
+			return pos[1];
 
-		float terrainY = world.GetSurfaceY(origin[0], origin[2]);
-		float agl = origin[1] - terrainY;
+		ref TraceParam down = new TraceParam();
+		down.Start = pos;
+		down.End = Vector(pos[0], pos[1] - MHJ_Constants.AI_GROUND_TRACE_M, pos[2]);
+		down.Flags = TraceFlags.WORLD | TraceFlags.ENTS;
+		if (ignore)
+			down.Exclude = ignore;
+
+		float coef = world.TraceMove(down, null);
+		if (coef < 1)
+			return down.Start[1] - (down.Start[1] - down.End[1]) * coef;
+
+		return world.GetSurfaceY(pos[0], pos[2]);
+	}
+
+	//------------------------------------------------------------------------------------------------
+	static bool HasStandRoom(vector pos, float clearance)
+	{
+		BaseWorld world = GetGame().GetWorld();
+		if (!world)
+			return false;
+
+		ref TraceParam up = new TraceParam();
+		up.Start = pos + Vector(0, 0.12, 0);
+		up.End = up.Start + Vector(0, clearance, 0);
+		up.Flags = TraceFlags.WORLD | TraceFlags.ENTS;
+		float coef = world.TraceMove(up, null);
+		if (coef < 1.0)
+			return false;
+
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! Traced downward from above the position, not up from it: a ray leaving a
+	//! building through the underside of its roof can miss one-sided collision,
+	//! which reports an interior as open sky.
+	static bool HasOpenSky(vector pos)
+	{
+		BaseWorld world = GetGame().GetWorld();
+		if (!world)
+			return false;
+
+		ref TraceParam down = new TraceParam();
+		down.Start = pos + Vector(0, MHJ_Constants.AI_DROP_SKY_M, 0);
+		down.End = pos + Vector(0, MHJ_Constants.AI_LAND_BIAS_M + 0.05, 0);
+		down.Flags = TraceFlags.WORLD | TraceFlags.ENTS;
+		float coef = world.TraceMove(down, null);
+		if (coef < 1.0)
+			return false;
+
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! Streets and rooftops pass. Interiors fail the open-sky up-trace.
+	protected static bool IsOpenGroundAt(vector sample, IEntity ignore, out vector outPos)
+	{
+		outPos = vector.Zero;
+
+		float groundY = GroundY(sample, ignore);
+		vector hit;
+		hit[0] = sample[0];
+		hit[1] = groundY + MHJ_Constants.AI_LAND_BIAS_M;
+		hit[2] = sample[2];
+
+		if (!HasStandRoom(hit, MHJ_Constants.AI_LAND_STAND_M))
+			return false;
+		if (!HasOpenSky(hit))
+			return false;
+
+		outPos = hit;
+		return true;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	static bool TryFindOpenGround(vector sample, float radius, IEntity ignore, out vector outPos)
+	{
+		outPos = vector.Zero;
+		if (IsOpenGroundAt(sample, ignore, outPos))
+			return true;
+
+		if (radius <= 0.5)
+			return false;
+
+		int rings = 4;
+		int ring;
+		for (ring = 1; ring <= rings; ring++)
+		{
+			float ringF = ring;
+			float ringsF = rings;
+			float searchR = radius * (ringF / ringsF);
+			int steps = 6 * ring;
+			int step;
+			for (step = 0; step < steps; step++)
+			{
+				float stepF = step;
+				float stepsF = steps;
+				float angle = Math.PI2 * (stepF / stepsF);
+				vector probe;
+				probe[0] = sample[0] + Math.Cos(angle) * searchR;
+				probe[2] = sample[2] + Math.Sin(angle) * searchR;
+				probe[1] = sample[1];
+				if (IsOpenGroundAt(probe, ignore, outPos))
+					return true;
+			}
+		}
+
+		return false;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	static float GetAgl(vector origin, IEntity ignore)
+	{
+		float groundY = GroundY(origin, ignore);
+		float agl = origin[1] - groundY;
 		if (agl < 0)
 			agl = 0;
 		return agl;

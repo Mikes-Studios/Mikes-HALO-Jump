@@ -108,7 +108,7 @@ class MHJ_Constants
 	//! sit slot is +1.474 above it, and the canopy is several metres above
 	//! that. Positive pushes the fabric farther from the AI. Negative puts
 	//! the AI into the harness. -1.474 parks feet on the sit slot.
-	static const float CANOPY_AI_VISUAL_Y = -1.474;
+	static const float CANOPY_AI_VISUAL_Y = -0.474;
 	static const float CANOPY_STRETCH_TIME = 0.32;
 	static const float CANOPY_INFLATE_TIME = 1.05;
 	static const float CANOPY_OPEN_TIME = 2.4;
@@ -150,9 +150,28 @@ class MHJ_Constants
 	static const string CANOPY_MESH_REMAP = "$remap 'Chute' '{85583F983D5A2BA8}Assets/ParachuteMK3/Data/Chute.emat'; $remap 'Line' '{31106DE7805868A1}Assets/ParachuteMK3/Data/Line.emat'; $remap '01__Default' '{17C975C41F8929BD}Assets/ParachuteMK3/Data/01__Default.emat'";
 	static const float AI_DROP_AGL = 380;
 	static const int AI_DROP_MAX = 40;
+	//! Dedicated clients never see the stick slot, so heading/path/bank go
+	//! over the game-mode RPC at this rate. SmoothCD still interpolates.
+	static const float AI_VISUAL_POSE_DT = 0.1;
 	//! Applied only to the AI origin step. Do not write these back into m_vVel.
 	static const float AI_CANOPY_SPEED_SCALE = 0.5;
 	static const float AI_CANOPY_SINK_SCALE = 2;
+	//! Height the open-sky check traces down from. 1.9 m stand room alone still
+	//! passes interiors.
+	static const float AI_DROP_SKY_M = 12;
+	static const float AI_LAND_STAND_M = 1.9;
+	static const float AI_LAND_BIAS_M = 0.1;
+	static const float AI_LAND_SEARCH_M = 16;
+	static const float AI_GROUND_TRACE_M = 100;
+	//! Swept collision for the AI origin step. SetOrigin never collides, so the
+	//! step is traced as a torso sphere: centre AI_SWEEP_CHEST_M above the feet
+	//! so terrain under a descending jumper does not block forward flight.
+	static const float AI_SWEEP_R_M = 0.4;
+	static const float AI_SWEEP_CHEST_M = 1.0;
+	static const float AI_SWEEP_SKIN_M = 0.12;
+	//! Down-trace start offset above the pre-step feet. Starting on the surface
+	//! can report the collider the jumper is already resting on.
+	static const float AI_SWEEP_UP_M = 0.5;
 	static const string SLOT_FREEFALL = "freefall";
 	static const string SLOT_CANOPY = "passenger_l02";
 	static const int CRAFT_INTERACTION_LAYER = 0x4040;
