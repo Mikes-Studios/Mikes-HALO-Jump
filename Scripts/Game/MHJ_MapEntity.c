@@ -2,7 +2,7 @@
 //! Vanilla OpenMap binds the canvas with FindAnyWidget("MapWidget") then SetFrame /
 //! delayed SetSizeInUnits with no null check. A runtime CreateWidget MapWidget is
 //! often missed, which crashes Workbench at 0x20. Abort OpenMap unless the canvas
-//! is already in the tree; HALO spawns it from MHJ_MapHost.layout.
+//! is already in the tree; MHJ_MapHost spawns it from MHJ_MapHost.layout.
 //!
 //! Consumer: loaded with the addon. Do not instantiate.
 //!
@@ -60,10 +60,10 @@ modded class SCR_MapEntity
 	//------------------------------------------------------------------------------------------------
 	//! Vanilla lets the view centre travel to the map edge, which leaves empty
 	//! widget area. MapWidget does not clear that, so pan trails. Keep the map
-	//! filling the HALO picker.
+	//! filling any MHJ_MapHost pane (HALO planner and GM Director).
 	protected override bool FitPanBounds(inout float panX, inout float panY, bool center)
 	{
-		if (!MHJ_HaloJumpMenu.IsOpen())
+		if (!MHJ_MapHost.IsPlannerSession())
 			return super.FitPanBounds(panX, panY, center);
 
 		if (!m_MapWidget)

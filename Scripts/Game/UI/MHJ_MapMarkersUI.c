@@ -41,7 +41,7 @@ modded class SCR_MapMarkersUI
 
 		if (m_CursorModule)
 		{
-			if (!MHJ_HaloJumpMenu.IsOpen())
+			if (!MHJ_MapHost.IsPlannerSession())
 				return;
 		}
 
@@ -86,7 +86,7 @@ modded class SCR_MapMarkersUI
 
 		if (m_CursorModule)
 		{
-			if (!MHJ_HaloJumpMenu.IsOpen())
+			if (!MHJ_MapHost.IsPlannerSession())
 				return;
 		}
 

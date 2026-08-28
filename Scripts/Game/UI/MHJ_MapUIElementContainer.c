@@ -3,7 +3,8 @@
 //! required by vanilla OnMapOpen (NPE if missing). Copy the game mode's gadget
 //! map task layout so Conflict vs vanilla icons match the paper map.
 //! Planner icons clip to the map widget — vanilla never clips because the paper
-//! map is fullscreen.
+//! map is fullscreen. HALO and GM Director both use MHJ_MapHost; clip and
+//! spawn-point skip key off IsPlannerSession, not the HALO menu.
 //!
 //! Consumer: loaded with the addon. Do not instantiate.
 //!
@@ -15,7 +16,7 @@ modded class SCR_MapUIElementContainer
 	//------------------------------------------------------------------------------------------------
 	override void OnMapOpen(MapConfiguration config)
 	{
-		if (!MHJ_HaloJumpMenu.IsOpen())
+		if (!MHJ_MapHost.IsPlannerSession())
 		{
 			super.OnMapOpen(config);
 			return;
@@ -43,7 +44,7 @@ modded class SCR_MapUIElementContainer
 	//------------------------------------------------------------------------------------------------
 	override void AddSpawnPoint(SCR_SpawnPoint spawnPoint)
 	{
-		if (MHJ_HaloJumpMenu.IsOpen())
+		if (MHJ_MapHost.IsPlannerSession())
 			return;
 
 		super.AddSpawnPoint(spawnPoint);
@@ -52,7 +53,7 @@ modded class SCR_MapUIElementContainer
 	//------------------------------------------------------------------------------------------------
 	override void InitSpawnPoints()
 	{
-		if (MHJ_HaloJumpMenu.IsOpen())
+		if (MHJ_MapHost.IsPlannerSession())
 			return;
 
 		super.InitSpawnPoints();
@@ -63,7 +64,7 @@ modded class SCR_MapUIElementContainer
 	{
 		super.OnTaskAdded(task);
 
-		if (!MHJ_HaloJumpMenu.IsOpen())
+		if (!MHJ_MapHost.IsPlannerSession())
 			return;
 
 		MHJ_ClipIconsContainer();
@@ -74,7 +75,7 @@ modded class SCR_MapUIElementContainer
 	override void UpdateIconPosition(Widget widget, SCR_MapUIElement icon, float x, float y)
 	{
 		super.UpdateIconPosition(widget, icon, x, y);
-		if (!MHJ_HaloJumpMenu.IsOpen())
+		if (!MHJ_MapHost.IsPlannerSession())
 			return;
 
 		MHJ_HideIconOutsideMap(widget, x, y);
