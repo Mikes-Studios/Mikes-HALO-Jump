@@ -1,23 +1,25 @@
 //------------------------------------------------------------------------------------------------
-//! Native MapWidget + SCR_MapEntity planner session for the HALO drop picker.
-//! MapWidget is spawned from UI/Layouts/MHJ_MapHost.layout (vanilla MapWidgetClass),
-//! as a sibling frame on the menu root. The frame is named MapFrame and hosts
-//! UIIconsContainer so paper-map pins and tasks can parent onto it. CLIPCHILDREN
-//! keeps those icons inside the picker when the map pans. OpenMap waits
-//! until the picker parent-chain intro has settled, then waits until the slot has not moved for
-//! a beat, then OpenMap once. Clicks stay in map-widget space; overlay widgets
-//! are IGNORE_CURSOR.
+//! Native MapWidget + SCR_MapEntity planner session for the HALO drop picker
+//! and GM Director. MapWidget is spawned from UI/Layouts/MHJ_MapHost.layout
+//! (vanilla MapWidgetClass), as a sibling frame on the menu root. The frame is
+//! named MapFrame and hosts UIIconsContainer so paper-map pins and tasks can
+//! parent onto it. CLIPCHILDREN keeps those icons inside the picker when the
+//! map pans. OpenMap waits until the picker parent-chain intro has settled,
+//! then waits until the slot has not moved for a beat, then OpenMap once.
+//! Clicks stay in map-widget space; overlay widgets are IGNORE_CURSOR.
 //!
-//! Consumer: owned by MHJ_HaloJumpMenu only.
+//! Consumer: MHJ_HaloJumpMenu and IA_GmDirectorMenu. FitPanBounds, marker clip,
+//! and task-icon clip key off IsPlannerSession so both panes fill the widget.
 //------------------------------------------------------------------------------------------------
 class MHJ_MapHost
 {
+	protected static bool s_bPlannerSession;
 	protected static const int MAP_FRAME_Z = 60;
 	protected static const float INSET = 3;
 	protected static const float MIN_OPEN_SIZE = 32;
 	protected static const float PAN_NAV_PX = 48;
 	protected static const float ZOOM_STEP = 1.18;
-	protected static const float FOCUS_VIEW_M = 700;
+	protected static const float FOCUS_VIEW_M = 1100;
 	protected static const int STABLE_MS = 50;
 	protected static const float SLOT_MOVE_PX = 8;
 	protected static const string MAP_CONTEXT = "MapContext";
@@ -59,7 +61,7 @@ class MHJ_MapHost
 
 		m_wMenuRoot = menuRoot;
 		m_Runtime = runtime;
-		m_bLive = false;
+		SetLive(false);
 		m_bZoomReady = false;
 
 		SCR_MapEntity mapEnt = SCR_MapEntity.GetMapInstance();
@@ -74,6 +76,7 @@ class MHJ_MapHost
 		SCR_MapEntity.GetOnMapClose().Insert(OnMapClose);
 
 		m_bWantOpen = true;
+		SetPlannerSession(true);
 		return true;
 	}
 
@@ -106,7 +109,7 @@ class MHJ_MapHost
 
 		m_wMenuRoot = null;
 		m_Runtime = null;
-		m_bLive = false;
+		SetLive(false);
 		m_bWantOpen = false;
 		m_bZoomReady = false;
 		m_bOwnsMap = false;
@@ -119,6 +122,7 @@ class MHJ_MapHost
 		m_bHasFocusTarget = false;
 		m_fFocusX = 0;
 		m_fFocusZ = 0;
+		SetPlannerSession(false);
 		m_bClosing = false;
 	}
 
@@ -127,6 +131,7 @@ class MHJ_MapHost
 	{
 		m_bWantOpen = false;
 		m_bOwnsMap = false;
+		SetPlannerSession(false);
 		SCR_MapEntity.GetOnMapOpen().Remove(OnMapOpen);
 		SCR_MapEntity.GetOnMapOpenComplete().Remove(OnMapOpenComplete);
 		SCR_MapEntity.GetOnMapClose().Remove(OnMapClose);
@@ -137,6 +142,29 @@ class MHJ_MapHost
 	bool IsLive()
 	{
 		return m_bLive;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	//! True from a successful Open until Close / AbortOpen. HALO and GM Director
+	//! both use this session; pan-fill and icon clip must not key off the HALO
+	//! menu alone or Director leaves empty MapWidget area (pan trails). Set
+	//! before OpenMap so map-module OnMapOpen sees it the same way HALO's menu
+	//! already did.
+	static bool IsPlannerSession()
+	{
+		return s_bPlannerSession;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void SetPlannerSession(bool on)
+	{
+		s_bPlannerSession = on;
+	}
+
+	//------------------------------------------------------------------------------------------------
+	protected void SetLive(bool live)
+	{
+		m_bLive = live;
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -754,7 +782,7 @@ class MHJ_MapHost
 		if (!mapEnt)
 		{
 			m_bOwnsMap = false;
-			m_bLive = false;
+			SetLive(false);
 			return;
 		}
 
@@ -775,7 +803,7 @@ class MHJ_MapHost
 		}
 
 		m_bOwnsMap = false;
-		m_bLive = false;
+		SetLive(false);
 		m_bZoomReady = false;
 		ReleaseMapContext();
 	}
@@ -801,8 +829,9 @@ class MHJ_MapHost
 			if (m_bOwnsMap || m_bWantOpen)
 			{
 				m_bOwnsMap = false;
-				m_bLive = false;
+				SetLive(false);
 				m_bWantOpen = false;
+				SetPlannerSession(false);
 				MHJ_HaloJumpMenu.Close();
 			}
 			return;
@@ -816,13 +845,13 @@ class MHJ_MapHost
 			MHJ_Log.Error("Planner map opened without a canvas");
 			m_bWantOpen = false;
 			m_bOwnsMap = false;
-			m_bLive = false;
+			SetLive(false);
 			return;
 		}
 
 		m_bOwnsMap = true;
 		m_bWantOpen = false;
-		m_bLive = true;
+		SetLive(true);
 		m_bZoomReady = false;
 		ApplyFitAndPips(SCR_MapEntity.GetMapInstance());
 	}
@@ -858,7 +887,7 @@ class MHJ_MapHost
 			wasOurs = true;
 
 		m_bOwnsMap = false;
-		m_bLive = false;
+		SetLive(false);
 		m_bZoomReady = false;
 		RecyclePips();
 
