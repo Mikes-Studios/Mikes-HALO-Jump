@@ -163,6 +163,13 @@ class MHJ_Constants
 	static const float AI_LAND_BIAS_M = 0.1;
 	static const float AI_LAND_SEARCH_M = 16;
 	static const float AI_GROUND_TRACE_M = 100;
+	//! GroundY starts this far above the pawn so a sloped one-sided shell is
+	//! hit from outside. A short ray from the feet starts inside and reports
+	//! the void floor. Skip trees / small props; keep Building and large meshes.
+	static const float AI_SHELL_COLUMN_M = 200;
+	static const float AI_SHELL_XZ_MIN_M = 10;
+	static const float AI_SHELL_HEIGHT_MIN_M = 6;
+	static const int AI_SHELL_SKIP_MAX = 6;
 	//! Swept collision for the AI origin step. SetOrigin never collides, so the
 	//! step is traced as a torso sphere: centre AI_SWEEP_CHEST_M above the feet
 	//! so terrain under a descending jumper does not block forward flight.
