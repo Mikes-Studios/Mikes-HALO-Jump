@@ -71,17 +71,15 @@ class MHJ_AiDropAutopilot
 
 	//------------------------------------------------------------------------------------------------
 	//! The director drives the pawn with SetOrigin, which does not collide, so
-	//! the step itself has to. Horizontal motion is sphere-swept against
-	//! WORLD|ENTS and slides along whatever it hits; the descent is clamped to
-	//! the first surface below. Without this a canopy flies straight through a
-	//! wall and then lands on the interior floor, where no open-sky test can
-	//! save it.
+	//! the step itself has to. Sweep the full 3D step: a horizontal-only chest
+	//! sphere walks XY under a sloped one-sided face, then GroundY starts
+	//! inside and snaps to the void floor. Slide along the hit; clamp Y to the
+	//! first shell from above (trees skipped) so a missed face recovers onto
+	//! the outer surface instead of the interior.
 	static void AdvanceOrigin(notnull MHJ_AiDropSlot slot, vector step, float dt)
 	{
 		vector from = slot.m_vOrigin;
 		vector delta = step * dt;
-		float fall = delta[1];
-		delta[1] = 0;
 
 		vector moved;
 		vector norm;
@@ -89,8 +87,8 @@ class MHJ_AiDropAutopilot
 		if (SweepSphere(from, delta, slot.m_Character, moved, norm, travelled))
 			moved = SlideAlongHit(slot, from, delta, moved, norm, travelled);
 
-		float groundY = GroundY(Vector(moved[0], from[1] + MHJ_Constants.AI_SWEEP_UP_M, moved[2]), slot.m_Character);
-		float wantY = moved[1] + fall;
+		float groundY = GroundY(moved, slot.m_Character);
+		float wantY = moved[1];
 		float minY = groundY + MHJ_Constants.AI_LAND_BIAS_M;
 		if (wantY < minY)
 			wantY = minY;
@@ -296,26 +294,92 @@ class MHJ_AiDropAutopilot
 	}
 
 	//------------------------------------------------------------------------------------------------
-	//! First WORLD|ENTS hit below pos, then the terrain mesh. Exclude the
-	//! jumper so the down-trace does not stop on the pawn itself.
+	//! Large horizontal footprint plus height: hangar, warehouse, monument.
+	//! Trees are skipped before this runs.
+	protected static bool IsLargeShellEntity(IEntity ent)
+	{
+		if (!ent)
+			return false;
+
+		vector mins;
+		vector maxs;
+		ent.GetWorldBounds(mins, maxs);
+		float sx = maxs[0] - mins[0];
+		float sz = maxs[2] - mins[2];
+		float sy = maxs[1] - mins[1];
+		if (sx <= MHJ_Constants.AI_SHELL_XZ_MIN_M)
+			return false;
+		if (sz <= MHJ_Constants.AI_SHELL_XZ_MIN_M)
+			return false;
+		if (sy <= MHJ_Constants.AI_SHELL_HEIGHT_MIN_M)
+			return false;
+
+		return true;
+	}
+
+	//! First walkable shell from well above pos. Trees and small props are
+	//! skipped so forests clamp to dirt, not canopy. A short ray from the
+	//! feet starts inside a sloped monument and reports the void floor.
 	static float GroundY(vector pos, IEntity ignore)
 	{
 		BaseWorld world = GetGame().GetWorld();
 		if (!world)
 			return pos[1];
 
+		float terrainY = world.GetSurfaceY(pos[0], pos[2]);
+		float startY = pos[1] + MHJ_Constants.AI_SHELL_COLUMN_M;
+		float minStart = terrainY + MHJ_Constants.AI_SHELL_COLUMN_M;
+		if (startY < minStart)
+			startY = minStart;
+
+		float endY = terrainY - 2;
+		float minEnd = pos[1] - MHJ_Constants.AI_GROUND_TRACE_M;
+		if (endY > minEnd)
+			endY = minEnd;
+		if (endY > terrainY - 2)
+			endY = terrainY - 2;
+
+		float span = startY - endY;
+		if (span < 1)
+			return terrainY;
+
 		ref TraceParam down = new TraceParam();
-		down.Start = pos;
-		down.End = Vector(pos[0], pos[1] - MHJ_Constants.AI_GROUND_TRACE_M, pos[2]);
 		down.Flags = TraceFlags.WORLD | TraceFlags.ENTS;
+		ref array<IEntity> skipped = new array<IEntity>();
 		if (ignore)
-			down.Exclude = ignore;
+			skipped.Insert(ignore);
+		down.ExcludeArray = skipped;
 
-		float coef = world.TraceMove(down, null);
-		if (coef < 1)
-			return down.Start[1] - (down.Start[1] - down.End[1]) * coef;
+		int skipCount;
+		for (skipCount = 0; skipCount <= MHJ_Constants.AI_SHELL_SKIP_MAX; skipCount++)
+		{
+			down.Start = Vector(pos[0], startY, pos[2]);
+			down.End = Vector(pos[0], endY, pos[2]);
+			float coef = world.TraceMove(down, null);
+			if (coef >= 1)
+				return terrainY;
 
-		return world.GetSurfaceY(pos[0], pos[2]);
+			float hitY = startY - (span * coef);
+			IEntity hitEnt = down.TraceEnt;
+			if (!hitEnt)
+				return hitY;
+
+			if (hitEnt.IsInherited(BaseTree))
+			{
+				skipped.Insert(hitEnt);
+				continue;
+			}
+
+			if (Building.Cast(hitEnt))
+				return hitY;
+
+			if (IsLargeShellEntity(hitEnt))
+				return hitY;
+
+			skipped.Insert(hitEnt);
+		}
+
+		return terrainY;
 	}
 
 	//------------------------------------------------------------------------------------------------
@@ -358,7 +422,8 @@ class MHJ_AiDropAutopilot
 	}
 
 	//------------------------------------------------------------------------------------------------
-	//! Streets and rooftops pass. Interiors fail the open-sky up-trace.
+	//! Streets and rooftops pass. GroundY is the first shell from above, so a
+	//! hollow monument reports the outer face, not the void floor.
 	protected static bool IsOpenGroundAt(vector sample, IEntity ignore, out vector outPos)
 	{
 		outPos = vector.Zero;
